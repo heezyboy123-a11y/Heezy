@@ -53,12 +53,12 @@ export const Hero: React.FC<HeroProps> = ({
     : [];
 
   const quickTags = [
-    { label: 'Free Shelf', tag: 'free' },
     { label: 'Self-Help', tag: 'Self-Help & Personal Growth' },
-    { label: 'African Literature', tag: 'African Literature' },
+    { label: 'Biography', tag: 'History & Biography' },
+    { label: 'Free Shelf', tag: 'free' },
+    { label: 'African Lit', tag: 'African Literature' },
     { label: 'Philosophy', tag: 'Philosophy & Thought' },
     { label: 'Finance & Wealth', tag: 'Finance & Wealth' },
-    { label: 'Poetry', tag: 'Poetry' },
     { label: 'Print Delivery', tag: 'print' },
   ];
 

@@ -34,6 +34,8 @@ function fillMissingCovers(bookList: Book[]): Book[] {
         theme = 'terracotta-arch';
       } else if (b.genre === 'Finance & Wealth') {
         theme = 'indigo-stamped';
+      } else if (b.genre === 'History & Biography') {
+        theme = 'minimalist-editorial';
       } else if (b.genre === 'Business & Craft') {
         theme = 'modern-bauhaus';
       } else if (b.genre === 'Technology & Society' || b.genre === 'Science & Nature') {
@@ -60,6 +62,20 @@ function prepareInitialBooks(): Book[] {
   return fillMissingCovers(INITIAL_BOOKS);
 }
 
+// Helper to determine if a user has Store Owner / Master Administrator privileges
+export function isStoreOwnerUser(user: User | null): boolean {
+  if (!user) return false;
+  const email = (user.email || '').toLowerCase().trim();
+  const name = (user.name || '').toLowerCase().trim();
+  return (
+    user.role === 'admin' ||
+    email === 'heezyboy123@gmail.com' ||
+    email === 'itljies@gmail.com' ||
+    email.includes('heezy') ||
+    name.includes('heezy')
+  );
+}
+
 // ----------------------------------------------------
 // LOCAL STORAGE SYNC & REST API INTEGRATION
 // ----------------------------------------------------
@@ -67,12 +83,29 @@ function prepareInitialBooks(): Book[] {
 export function getStoredBooks(): Book[] {
   try {
     const raw = localStorage.getItem(BOOKS_STORAGE_KEY);
+    const initial = prepareInitialBooks();
     if (!raw) {
-      const initialized = prepareInitialBooks();
-      localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(initialized));
-      return initialized;
+      localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(initial));
+      return initial;
     }
-    return fillMissingCovers(JSON.parse(raw));
+    const parsed: Book[] = JSON.parse(raw);
+    // Ensure all core books exist and maintain accurate genres (Wonderfully Made in Self-Help, Elon Musk in Biography)
+    const merged = [...parsed];
+    for (const initBook of initial) {
+      const foundIdx = merged.findIndex(
+        (b) => b.id === initBook.id || b.title.toLowerCase().trim() === initBook.title.toLowerCase().trim()
+      );
+      if (foundIdx === -1) {
+        merged.push(initBook);
+      } else {
+        // Sync corrected genre & metadata
+        merged[foundIdx].genre = initBook.genre;
+        if (!merged[foundIdx].coverUrl) {
+          merged[foundIdx].coverUrl = initBook.coverUrl;
+        }
+      }
+    }
+    return fillMissingCovers(merged);
   } catch {
     return prepareInitialBooks();
   }
@@ -329,9 +362,13 @@ export function loginOrRegisterUser({
   name?: string;
   role?: 'reader' | 'author' | 'admin';
 }): User {
-  const isOwner = email.toLowerCase().trim() === 'itljies@gmail.com';
+  const cleanEmail = email.toLowerCase().trim();
+  const isOwner =
+    cleanEmail === 'itljies@gmail.com' ||
+    cleanEmail === 'heezyboy123@gmail.com' ||
+    cleanEmail.startsWith('heezy');
   const effectiveRole = isOwner ? 'admin' : role;
-  const effectiveName = name?.trim() || (isOwner ? 'Store Owner' : email.split('@')[0]);
+  const effectiveName = name?.trim() || (isOwner ? 'Store Owner (Heezy)' : email.split('@')[0]);
 
   const user: User = {
     id: `usr_${Date.now()}`,

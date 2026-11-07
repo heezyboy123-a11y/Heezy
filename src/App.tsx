@@ -258,10 +258,23 @@ export default function App() {
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-stone-500">
                 <span>The Open Catalog</span>
                 <span aria-hidden="true">·</span>
-                <span>{filteredBooks.length} Titles Available</span>
+                <span>{filteredBooks.length} {filteredBooks.length === 1 ? 'Title' : 'Titles'} Available</span>
+                {selectedGenre !== 'All' && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <button
+                      onClick={() => setSelectedGenre('All')}
+                      className="text-stone-800 underline hover:text-black cursor-pointer"
+                    >
+                      Show All Shelves
+                    </button>
+                  </>
+                )}
               </div>
               <h2 className="font-serif text-2xl sm:text-3xl font-bold text-stone-900 mt-1">
-                {activeFilter === 'free'
+                {selectedGenre !== 'All'
+                  ? selectedGenre
+                  : activeFilter === 'free'
                   ? 'The Free Reading Shelf'
                   : activeFilter === 'ebook'
                   ? 'Digital Ebooks for Immediate Download'
@@ -524,6 +537,7 @@ export default function App() {
         <UploadModal
           onClose={() => setIsUploadOpen(false)}
           onBookUploaded={handleBookUploaded}
+          currentUser={currentUser}
         />
       )}
 
