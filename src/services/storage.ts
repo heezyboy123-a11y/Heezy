@@ -117,7 +117,20 @@ export async function fetchServerBooks(): Promise<Book[]> {
     if (res.ok) {
       const rawBooks: Book[] = await res.json();
       if (Array.isArray(rawBooks) && rawBooks.length > 0) {
-        const serverBooks = fillMissingCovers(rawBooks);
+        // Preserve any custom covers already stored locally so they are never lost
+        const localBooks = getStoredBooks();
+        const mergedServerBooks = rawBooks.map((serverBook) => {
+          const match = localBooks.find(
+            (lb) =>
+              lb.id === serverBook.id ||
+              lb.title.toLowerCase().trim() === serverBook.title.toLowerCase().trim()
+          );
+          if (match && match.coverUrl && !serverBook.coverUrl) {
+            return { ...serverBook, coverUrl: match.coverUrl };
+          }
+          return serverBook;
+        });
+        const serverBooks = fillMissingCovers(mergedServerBooks);
         localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(serverBooks));
         return serverBooks;
       }

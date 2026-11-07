@@ -1,6 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Book } from '../types/book';
-import { Search, Globe, Truck, ShieldCheck, UploadCloud, ArrowUpRight, BookOpen } from 'lucide-react';
+import {
+  Search,
+  Globe,
+  Truck,
+  ShieldCheck,
+  UploadCloud,
+  ArrowUpRight,
+  BookOpen,
+  Sparkles,
+  Layers,
+} from 'lucide-react';
 
 interface HeroProps {
   searchQuery: string;
@@ -24,6 +34,7 @@ export const Hero: React.FC<HeroProps> = ({
   onQuickFilter,
 }) => {
   const [isFocused, setIsFocused] = useState(false);
+  const [featuredIndex, setFeaturedIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -62,11 +73,15 @@ export const Hero: React.FC<HeroProps> = ({
     { label: 'Print Delivery', tag: 'print' },
   ];
 
+  // Lead book for spotlight showcase
+  const spotlightCandidates = allBooks.slice(0, 4);
+  const activeSpotlightBook = spotlightCandidates[featuredIndex] || allBooks[0];
+
   return (
     <section className="relative overflow-visible border-b border-[#E8E3D9] bg-[#FBF9F5]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 lg:py-14">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-          {/* Left Column: Editorial Headline & Value Propositions */}
+          {/* Left Column: Editorial Headline & Search */}
           <div className="lg:col-span-7 space-y-6">
             <div className="flex items-center gap-2 text-xs font-medium text-stone-500 uppercase tracking-widest">
               <span>Direct-to-Reader Publishing</span>
@@ -100,7 +115,7 @@ export const Hero: React.FC<HeroProps> = ({
                 {searchQuery && (
                   <button
                     onClick={() => onSearchChange('')}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs text-stone-400 hover:text-stone-700"
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-semibold text-stone-400 hover:text-stone-700"
                   >
                     Clear
                   </button>
@@ -184,34 +199,149 @@ export const Hero: React.FC<HeroProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Visual Anchor & Quick Upload Card */}
+          {/* Right Column: Redesigned Human-Free Interactive Book Collector's Hub */}
           <div className="lg:col-span-5">
-            <div className="relative rounded-xl overflow-hidden border border-[#E8E3D9] bg-white shadow-sm">
-              <div className="aspect-16/10 sm:aspect-16/9 relative overflow-hidden">
-                <img
-                  src="/src/assets/images/hero_bookstore_editorial_1793896191247.jpg"
-                  alt="Open Shelf peaceful architectural reading salon"
-                  className="w-full h-full object-cover transition-transform duration-700 hover:scale-102"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-stone-950/70 via-stone-950/20 to-transparent" />
-                <div className="absolute bottom-4 left-4 right-4 text-white">
-                  <p className="text-xs font-mono uppercase tracking-widest text-stone-300">Open Shelf Catalog</p>
-                  <p className="font-serif text-lg font-semibold leading-snug">
-                    {totalBooksCount} Independent Titles · {freeBooksCount} Free to Read
-                  </p>
+            <div className="relative rounded-2xl overflow-hidden border border-[#E8E3D9] bg-white shadow-md flex flex-col">
+              {/* Header Banner - Architectural Dark Indigo Theme */}
+              <div className="bg-[#1A2538] text-white p-4 sm:p-5 flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-1.5 text-[11px] font-mono tracking-widest uppercase text-amber-300 font-semibold">
+                    <Sparkles className="w-3 h-3 text-amber-300" />
+                    <span>Curated Press Spotlight</span>
+                  </div>
+                  <h3 className="font-serif text-lg font-bold text-white mt-0.5">
+                    Independent Editions Sanctuary
+                  </h3>
+                </div>
+                <div className="text-right">
+                  <span className="font-mono text-xs font-bold text-amber-200 block">
+                    {totalBooksCount} Titles
+                  </span>
+                  <span className="text-[11px] text-stone-300 font-mono">
+                    {freeBooksCount} Free to Read
+                  </span>
                 </div>
               </div>
 
-              {/* Quick Seller Phone Upload Action Strip */}
-              <div className="p-4 bg-stone-50 border-t border-stone-200 flex items-center justify-between gap-3">
+              {/* Spotlight Book Presentation Area (No Human Images, Pure Book Aesthetics) */}
+              {activeSpotlightBook && (
+                <div className="p-5 bg-gradient-to-b from-[#F7F4EC] to-white border-b border-stone-200/80 space-y-4">
+                  <div className="flex items-start gap-4 sm:gap-5">
+                    {/* Realistic 3D Book Cover View */}
+                    <div
+                      onClick={() => onSelectBook(activeSpotlightBook)}
+                      className="relative w-28 sm:w-32 aspect-3/4 rounded-xs overflow-hidden book-spine-shadow shrink-0 bg-stone-900 cursor-pointer group transition-transform duration-200 hover:scale-102"
+                    >
+                      {activeSpotlightBook.coverUrl ? (
+                        <img
+                          src={activeSpotlightBook.coverUrl}
+                          alt={activeSpotlightBook.title}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-[#1A2538] text-white flex flex-col items-center justify-center p-2 text-center">
+                          <span className="font-serif text-xs font-semibold leading-tight line-clamp-3">
+                            {activeSpotlightBook.title}
+                          </span>
+                          <span className="text-[10px] text-stone-300 mt-1 font-mono">
+                            {activeSpotlightBook.author}
+                          </span>
+                        </div>
+                      )}
+                      <div className="absolute inset-y-0 left-0 w-3 bg-gradient-to-r from-black/30 via-white/10 to-transparent pointer-events-none" />
+                    </div>
+
+                    {/* Spotlight Book Metadata */}
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div className="flex items-center gap-2 text-xs text-stone-500 font-medium">
+                        <span className="text-stone-700 font-semibold truncate">
+                          {activeSpotlightBook.genre}
+                        </span>
+                        {activeSpotlightBook.year && (
+                          <>
+                            <span aria-hidden="true" className="text-stone-300">·</span>
+                            <span className="font-mono">{activeSpotlightBook.year}</span>
+                          </>
+                        )}
+                      </div>
+
+                      <h4
+                        onClick={() => onSelectBook(activeSpotlightBook)}
+                        className="font-serif text-lg font-bold text-stone-900 leading-snug line-clamp-2 hover:text-stone-700 cursor-pointer"
+                      >
+                        {activeSpotlightBook.title}
+                      </h4>
+
+                      <p className="text-xs text-stone-600 font-medium">
+                        by <span className="text-stone-900">{activeSpotlightBook.author}</span>
+                      </p>
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <span className="font-mono text-sm font-bold text-stone-900 tabular-nums">
+                          {activeSpotlightBook.priceUSD === 0
+                            ? 'Free Edition'
+                            : `$${activeSpotlightBook.priceUSD.toFixed(2)}`}
+                        </span>
+                        {activeSpotlightBook.priceUSD > 0 && (
+                          <span className="text-[11px] text-stone-500 font-mono">
+                            (₦{activeSpotlightBook.priceNGN.toLocaleString()})
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="pt-1.5 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onSelectBook(activeSpotlightBook)}
+                          className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <BookOpen className="w-3.5 h-3.5 text-amber-200" />
+                          <span>View Edition</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Mini-Selector to browse featured shelf candidates */}
+                  {spotlightCandidates.length > 1 && (
+                    <div className="pt-2 border-t border-stone-200/70 flex items-center justify-between">
+                      <span className="text-[11px] font-mono text-stone-500 uppercase tracking-wider">
+                        Browse Spotlight:
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {spotlightCandidates.map((candidate, idx) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            onClick={() => setFeaturedIndex(idx)}
+                            className={`px-2.5 py-1 text-xs rounded-md transition-all font-medium truncate max-w-[120px] ${
+                              featuredIndex === idx
+                                ? 'bg-stone-900 text-white font-semibold shadow-2xs'
+                                : 'bg-white text-stone-600 hover:bg-stone-100 border border-stone-200'
+                            }`}
+                            title={candidate.title}
+                          >
+                            {idx + 1}. {candidate.title.split(' ')[0]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Direct Phone Upload Action Strip */}
+              <div className="p-4 bg-stone-50 flex items-center justify-between gap-3">
                 <div className="text-xs text-stone-600">
-                  <span className="font-semibold text-stone-900 block">Have ebooks on your phone?</span>
-                  <span>Upload directly with zero plan fees &amp; design covers.</span>
+                  <span className="font-semibold text-stone-900 block">
+                    Have manuscripts or ebooks on your phone?
+                  </span>
+                  <span>Upload directly with zero hosting fees &amp; canvas cover generator.</span>
                 </div>
                 <button
                   onClick={onOpenUpload}
-                  className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-medium rounded-md flex items-center gap-1.5 shrink-0 transition-colors shadow-xs"
+                  className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 shrink-0 transition-colors shadow-xs cursor-pointer active:scale-97"
                 >
                   <UploadCloud className="w-3.5 h-3.5" />
                   <span>Upload Now</span>
