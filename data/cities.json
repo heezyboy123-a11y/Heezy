@@ -1,0 +1,58 @@
+[
+  {
+    "id": "lagos-mainland",
+    "name": "Lagos (Mainland)",
+    "stateOrRegion": "Lagos State",
+    "deliveryFeeUSD": 3,
+    "deliveryFeeNGN": 4500,
+    "estimatedDays": "1–2 days"
+  },
+  {
+    "id": "lagos-island",
+    "name": "Lagos (Island & Lekki)",
+    "stateOrRegion": "Lagos State",
+    "deliveryFeeUSD": 3.5,
+    "deliveryFeeNGN": 5000,
+    "estimatedDays": "1–2 days"
+  },
+  {
+    "id": "abuja",
+    "name": "Abuja (FCT Metro)",
+    "stateOrRegion": "Federal Capital Territory",
+    "deliveryFeeUSD": 4,
+    "deliveryFeeNGN": 6000,
+    "estimatedDays": "2–3 days"
+  },
+  {
+    "id": "port-harcourt",
+    "name": "Port Harcourt",
+    "stateOrRegion": "Rivers State",
+    "deliveryFeeUSD": 4.5,
+    "deliveryFeeNGN": 6500,
+    "estimatedDays": "2–3 days"
+  },
+  {
+    "id": "ibadan",
+    "name": "Ibadan",
+    "stateOrRegion": "Oyo State",
+    "deliveryFeeUSD": 3.5,
+    "deliveryFeeNGN": 5000,
+    "estimatedDays": "2 days"
+  },
+  {
+    "id": "enugu",
+    "name": "Enugu City",
+    "stateOrRegion": "Enugu State",
+    "deliveryFeeUSD": 4.5,
+    "deliveryFeeNGN": 6500,
+    "estimatedDays": "2–4 days"
+  },
+  {
+    "id": "accra",
+    "name": "Accra Metro",
+    "stateOrRegion": "Greater Accra, Ghana",
+    "deliveryFeeUSD": 6,
+    "deliveryFeeNGN": 9000,
+    "estimatedDays": "3–5 days"
+  }
+]

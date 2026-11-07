@@ -1,0 +1,6 @@
+{
+  "name": "Open Shelf — Independent Digital & Print Bookstore",
+  "description": "Discover, read, and collect independent ebooks and print editions. Direct creator uploads, Paystack global checkout, local city courier delivery, and instant international downloads.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
