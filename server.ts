@@ -321,7 +321,7 @@ app.get('/api/paystack-config', (req, res) => {
     accountNumber: '',
     accountName: '',
     ownerWhatsapp: '',
-    enableBankTransfer: true,
+    enableBankTransfer: false,
   });
   res.json(config);
 });

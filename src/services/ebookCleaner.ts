@@ -1,11 +1,17 @@
 import JSZip from 'jszip';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import type * as PdfJsTypes from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { BookGenre } from '../types/book';
 import { CoverThemeId, generateCanvasBookCover } from './coverGenerator';
 
-// Configure local Vite-bundled PDF.js worker so Page 1 rendering works offline & on Vercel
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+let cachedPdfJs: typeof PdfJsTypes | null = null;
+async function getPdfJs(): Promise<typeof PdfJsTypes> {
+  if (cachedPdfJs) return cachedPdfJs;
+  const mod = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as unknown as typeof PdfJsTypes;
+  mod.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  cachedPdfJs = mod;
+  return mod;
+}
 
 export interface AnalyzedEbook {
   rawFileName: string;
@@ -695,9 +701,10 @@ async function renderPdfPageOneAndExtractMetadata(file: Blob): Promise<{
   subject?: string;
   sampleContent?: string;
 }> {
-  let pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
-  let loadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null;
+  let pdfDoc: PdfJsTypes.PDFDocumentProxy | null = null;
+  let loadingTask: PdfJsTypes.PDFDocumentLoadingTask | null = null;
   try {
+    const pdfjsLib = await getPdfJs();
     const buffer = await file.arrayBuffer();
     loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(buffer),

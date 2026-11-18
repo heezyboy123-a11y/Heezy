@@ -1,0 +1,13 @@
+{
+  "publicKey": "pk_test_d34298a098c47b5204781498b5840212a4c14c59",
+  "isLive": false,
+  "businessName": "Open Shelf Books",
+  "allowInternationalCards": true,
+  "supportEmail": "heezyboy123@gmail.com",
+  "currency": "USD",
+  "bankName": "",
+  "accountNumber": "",
+  "accountName": "",
+  "ownerWhatsapp": "",
+  "enableBankTransfer": true
+}

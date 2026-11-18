@@ -35,7 +35,7 @@ const DEFAULT_PAYSTACK_CONFIG: PaystackConfig = {
   accountNumber: '',
   accountName: '',
   ownerWhatsapp: '',
-  enableBankTransfer: true,
+  enableBankTransfer: false,
 };
 
 function fillMissingCovers(bookList: Book[]): Book[] {

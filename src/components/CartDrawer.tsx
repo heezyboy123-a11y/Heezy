@@ -16,6 +16,7 @@ import {
   Clock,
   RefreshCw,
   MessageCircle,
+  Receipt,
 } from 'lucide-react';
 import { initiatePaystackPayment } from '../services/paystack';
 import {
@@ -64,17 +65,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   // Payout / Payment config & method selection
   const [payoutConfig, setPayoutConfig] = useState<PaystackConfig>(() => getPaystackConfig());
   const hasBankAccount = Boolean(
-    payoutConfig.enableBankTransfer !== false &&
+    payoutConfig.enableBankTransfer === true &&
       payoutConfig.bankName?.trim() &&
       payoutConfig.accountNumber?.trim() &&
       payoutConfig.accountName?.trim()
   );
   const isPaystackLive = Boolean(
-    payoutConfig.isLive && payoutConfig.publicKey && !payoutConfig.publicKey.startsWith('pk_test_')
+    payoutConfig.isLive && payoutConfig.publicKey && payoutConfig.publicKey.startsWith('pk_live_')
   );
-  const [paymentMethod, setPaymentMethod] = useState<'paystack' | 'bank_transfer'>(
-    hasBankAccount && !isPaystackLive ? 'bank_transfer' : 'paystack'
-  );
+  const [paymentMethod, setPaymentMethod] = useState<'paystack' | 'bank_transfer'>('paystack');
   const [bankSenderRef, setBankSenderRef] = useState('');
   const [copiedAccount, setCopiedAccount] = useState(false);
 
@@ -92,18 +91,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   useEffect(() => {
     fetchServerPaystackConfig().then((cfg) => {
       setPayoutConfig(cfg);
-      const bankReady = Boolean(
-        cfg.enableBankTransfer !== false &&
-          cfg.bankName?.trim() &&
-          cfg.accountNumber?.trim() &&
-          cfg.accountName?.trim()
-      );
-      const liveReady = Boolean(
-        cfg.isLive && cfg.publicKey && !cfg.publicKey.startsWith('pk_test_')
-      );
-      if (bankReady && !liveReady) {
-        setPaymentMethod('bank_transfer');
-      }
     });
   }, []);
 
@@ -297,6 +284,69 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     setIsCheckingStatus(false);
   };
 
+  const handleDownloadOfficialReceipt = (order: Order) => {
+    const storeTitle = payoutConfig.businessName || 'Open Shelf Books';
+    const ref = order.paystackReference || order.bankTransferRef || 'FREE_GRANT';
+    const itemsHtml = order.items
+      .map(
+        (it) =>
+          `<tr>
+            <td style="padding:8px 0;border-bottom:1px solid #e7e5e4;"><strong>${it.book.title}</strong> (${it.format === 'print' ? 'Print Hardcopy' : 'Digital Ebook'}) x ${it.quantity}</td>
+            <td style="padding:8px 0;border-bottom:1px solid #e7e5e4;text-align:right;font-family:monospace;">₦${(
+              (it.format === 'print' ? it.book.priceNGN + 6500 : it.book.priceNGN) * it.quantity
+            ).toLocaleString()}</td>
+          </tr>`
+      )
+      .join('');
+
+    const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Payment Receipt - ${order.id}</title>
+</head>
+<body style="font-family:system-ui,-apple-system,sans-serif;background:#faf8f5;padding:32px;color:#1c1917;">
+  <div style="max-width:540px;margin:0 auto;background:#ffffff;border:1px solid #e7e5e4;border-radius:12px;padding:28px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #1c1917;padding-bottom:16px;margin-bottom:20px;">
+      <div>
+        <h1 style="margin:0;font-size:20px;">${storeTitle}</h1>
+        <p style="margin:4px 0 0;font-size:12px;color:#57534e;">Official Payment Receipt · Secured by Paystack</p>
+      </div>
+      <span style="background:#dcfce7;color:#166534;font-weight:700;font-size:12px;padding:4px 10px;border-radius:999px;">PAID</span>
+    </div>
+    <p style="font-size:13px;margin:4px 0;"><strong>Receipt / Order ID:</strong> ${order.id}</p>
+    <p style="font-size:13px;margin:4px 0;"><strong>Paystack Transaction Ref:</strong> ${ref}</p>
+    <p style="font-size:13px;margin:4px 0;"><strong>Date:</strong> ${new Date(order.date).toLocaleString()}</p>
+    <p style="font-size:13px;margin:4px 0 18px;"><strong>Billed To:</strong> ${order.customerName} (${order.customerEmail})</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding-bottom:8px;border-bottom:1px solid #d6d3d1;">Book / Edition</th>
+          <th style="text-align:right;padding-bottom:8px;border-bottom:1px solid #d6d3d1;">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${itemsHtml}</tbody>
+    </table>
+    <div style="margin-top:16px;padding-top:12px;border-top:2px solid #1c1917;display:flex;justify-content:space-between;font-size:16px;font-weight:700;">
+      <span>Total Paid</span>
+      <span>₦${order.totalNGN.toLocaleString()} ($${order.totalUSD.toFixed(2)})</span>
+    </div>
+    <p style="margin-top:20px;font-size:11px;color:#78716c;text-align:center;">Thank you for reading with ${storeTitle}. Keep this receipt for your records.</p>
+  </div>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `OpenShelf_Receipt_${order.id}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-stone-950/60 backdrop-blur-xs flex justify-end animate-in fade-in duration-200">
       <div className="w-full max-w-lg bg-white h-full shadow-2xl flex flex-col justify-between overflow-y-auto">
@@ -306,7 +356,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <span className="font-serif text-xl font-bold text-stone-900">
               {completedOrder
                 ? completedOrder.downloadAccessGranted
-                  ? 'Order Confirmed'
+                  ? 'Order & Official Receipt'
                   : 'Transfer Submitted'
                 : 'Your Book Bag'}
             </span>
@@ -326,20 +376,76 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
         {/* COMPLETED ORDER VIEW */}
         {completedOrder ? (
-          <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+          <div className="p-6 space-y-5 flex-1 overflow-y-auto">
             {completedOrder.downloadAccessGranted ? (
-              <div className="text-center space-y-2 py-4">
-                <div className="w-14 h-14 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                  <CheckCircle2 className="w-8 h-8" />
+              <>
+                <div className="text-center space-y-2 py-2">
+                  <div className="w-14 h-14 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <h3 className="font-serif text-2xl font-bold text-stone-900">
+                    Thank You, {completedOrder.customerName}!
+                  </h3>
+                  <p className="text-xs text-stone-600 font-mono">
+                    Order #{completedOrder.id} · Paystack Ref:{' '}
+                    {completedOrder.paystackReference || completedOrder.bankTransferRef || 'FREE_GRANT'}
+                  </p>
                 </div>
-                <h3 className="font-serif text-2xl font-bold text-stone-900">
-                  Thank You, {completedOrder.customerName}!
-                </h3>
-                <p className="text-xs text-stone-600 font-mono">
-                  Order #{completedOrder.id} · Ref:{' '}
-                  {completedOrder.paystackReference || completedOrder.bankTransferRef || 'FREE_GRANT'}
-                </p>
-              </div>
+
+                {/* Official Paystack & Store Payment Receipt Card */}
+                <div className="p-4 bg-white border border-stone-200 rounded-xl shadow-xs space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
+                    <div className="flex items-center gap-2 font-bold text-stone-900">
+                      <Receipt className="w-4 h-4 text-emerald-700" />
+                      <span>Official Payment Receipt</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[10px] font-bold">
+                      {completedOrder.paymentStatus === 'free_granted' ? 'FREE' : 'PAID · VERIFIED'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 text-stone-600">
+                    <div className="flex justify-between">
+                      <span>Merchant:</span>
+                      <span className="font-semibold text-stone-900">
+                        {payoutConfig.businessName || 'Open Shelf Books'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Receipt Email:</span>
+                      <span className="font-mono text-stone-900">{completedOrder.customerEmail}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Transaction Ref:</span>
+                      <span className="font-mono font-semibold text-stone-900">
+                        {completedOrder.paystackReference || completedOrder.bankTransferRef || 'FREE_GRANT'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between pt-1.5 border-t border-stone-100 text-stone-900 font-bold">
+                      <span>Total Paid:</span>
+                      <span className="font-mono">
+                        {completedOrder.totalUSD === 0
+                          ? 'Free'
+                          : `₦${completedOrder.totalNGN.toLocaleString()} ($${completedOrder.totalUSD.toFixed(2)})`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-stone-500 bg-stone-50 p-2 rounded border border-stone-100 leading-relaxed">
+                    When completed through Paystack, Paystack immediately emails an official transaction receipt to{' '}
+                    <strong className="text-stone-700">{completedOrder.customerEmail}</strong>. You can also save a copy below:
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadOfficialReceipt(completedOrder)}
+                    className="w-full py-2 bg-stone-100 hover:bg-stone-200 text-stone-900 border border-stone-300 rounded-md font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download Official Payment Receipt</span>
+                  </button>
+                </div>
+              </>
             ) : (
               <div className="text-center space-y-3 py-4">
                 <div className="w-14 h-14 mx-auto rounded-full bg-amber-100 text-amber-700 flex items-center justify-center">
@@ -755,11 +861,40 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               {/* Payment Method Selector */}
               {!isFreeTotal && (
                 <div className="p-4 bg-stone-50 rounded-lg border border-stone-200 space-y-3">
-                  <span className="text-xs font-bold text-stone-900 block">
-                    Payment Method
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-stone-900 block">
+                      Secured Checkout · Paystack
+                    </span>
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
+                        isPaystackLive
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {isPaystackLive ? 'Live Verified' : 'Test Mode'}
+                    </span>
+                  </div>
 
                   <div className={`grid gap-2 ${hasBankAccount ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('paystack')}
+                      className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
+                        paymentMethod === 'paystack'
+                          ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
+                          : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <CreditCard className="w-3.5 h-3.5 text-stone-800" />
+                        <span>Paystack Checkout</span>
+                      </div>
+                      <span className="text-[11px] text-stone-500 block leading-tight">
+                        Card, Bank Transfer, USSD · Instant Paystack email receipt.
+                      </span>
+                    </button>
+
                     {hasBankAccount && (
                       <button
                         type="button"
@@ -772,36 +907,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       >
                         <div className="flex items-center gap-1.5 mb-1">
                           <Landmark className="w-3.5 h-3.5 text-emerald-700" />
-                          <span>Bank Transfer</span>
+                          <span>Direct Bank Transfer</span>
                         </div>
                         <span className="text-[11px] text-stone-500 block leading-tight">
-                          Direct transfer to Store Bank Account.
+                          Transfer directly to Store Bank Account.
                         </span>
                       </button>
                     )}
-
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('paystack')}
-                      className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
-                        paymentMethod === 'paystack'
-                          ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
-                          : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <CreditCard className="w-3.5 h-3.5 text-stone-800" />
-                        <span>Card / Paystack</span>
-                      </div>
-                      <span className="text-[11px] text-stone-500 block leading-tight">
-                        {isPaystackLive
-                          ? 'Visa, Mastercard, Verve (Live).'
-                          : 'Paystack Sandbox (Test Mode).'}
-                      </span>
-                    </button>
                   </div>
 
-                  {/* Direct Bank Account Transfer Box */}
+                  {/* Direct Bank Account Transfer Box (only if enabled by Store Owner) */}
                   {paymentMethod === 'bank_transfer' && hasBankAccount && (
                     <div className="p-3 bg-white rounded-md border border-emerald-200 space-y-2.5 text-xs">
                       <div className="flex items-center justify-between">
@@ -860,12 +975,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
                         />
                       </div>
-                    </div>
-                  )}
-
-                  {paymentMethod === 'paystack' && !isPaystackLive && (
-                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900">
-                      Paystack is currently in <strong>Sandbox Test Mode</strong> until the Store Owner links their live Paystack merchant key (<code className="font-mono">pk_live_...</code>).
                     </div>
                   )}
                 </div>
