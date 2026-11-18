@@ -83,7 +83,7 @@ export function stripSiteWatermarks(input: string): string {
 
   // Replace underscores with spaces, normalize dots used between words (not decimal numbers)
   cleaned = cleaned.replace(/_/g, ' ');
-  cleaned = cleaned.replace(/(?<=[a-zA-Z])\.(?=[a-zA-Z])/g, ' ');
+  cleaned = cleaned.replace(/([a-zA-Z])\.([a-zA-Z])/g, '$1 $2');
 
   // Remove empty brackets/parens left behind after stripping domain tags
   cleaned = cleaned.replace(/\[\s*\]|\(\s*\)|\{\s*\}/g, ' ');
