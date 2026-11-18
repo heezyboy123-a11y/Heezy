@@ -36,6 +36,7 @@ export interface Book {
   language?: string;
   fileSize?: string;
   fileType?: 'pdf' | 'epub' | 'mobi' | 'txt';
+  cleanFileName?: string;
   downloadUrl?: string; // Blob or sample URL
   sampleContent?: string;
   featured?: boolean;

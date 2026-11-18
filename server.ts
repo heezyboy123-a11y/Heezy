@@ -377,12 +377,28 @@ app.post('/api/books', (req, res) => {
     if (!newBook || !newBook.title || !newBook.author) {
       return res.status(400).json({ error: 'Title and author are required.' });
     }
-    const current = readJsonFile(BOOKS_FILE, INITIAL_BOOKS);
-    const updated = [newBook, ...current];
+    const current = readJsonFile<any[]>(BOOKS_FILE, INITIAL_BOOKS);
+    const filtered = current.filter(
+      (b) => b.id !== newBook.id && b.title?.toLowerCase().trim() !== newBook.title?.toLowerCase().trim()
+    );
+    const updated = [newBook, ...filtered];
     writeJsonFile(BOOKS_FILE, updated);
     res.status(201).json(newBook);
   } catch (err) {
     res.status(500).json({ error: 'Failed to save book to server database.' });
+  }
+});
+
+app.put('/api/books/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedBook = req.body;
+    const current = readJsonFile<any[]>(BOOKS_FILE, INITIAL_BOOKS);
+    const updated = current.map((b) => (b.id === id ? { ...b, ...updatedBook } : b));
+    writeJsonFile(BOOKS_FILE, updated);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update book.' });
   }
 });
 

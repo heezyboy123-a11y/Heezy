@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { initiatePaystackPayment, generatePaystackReference } from '../services/paystack';
 import { saveOrder } from '../services/storage';
+import { getBookFileBlob } from '../services/fileStore';
+import { buildCleanFileName } from '../services/ebookCleaner';
 
 interface CartDrawerProps {
   isOpen?: boolean;
@@ -267,11 +269,28 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (item.book.downloadUrl) {
+                        onClick={async () => {
+                          const cleanName =
+                            item.book.cleanFileName ||
+                            buildCleanFileName(item.book.title, item.book.fileType || 'epub');
+
+                          const stored = await getBookFileBlob(item.book.id);
+                          if (stored?.blob) {
+                            const url = URL.createObjectURL(stored.blob);
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.download = stored.cleanFileName || cleanName;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            setTimeout(() => URL.revokeObjectURL(url), 10000);
+                            return;
+                          }
+
+                          if (item.book.downloadUrl && !item.book.downloadUrl.startsWith('blob:')) {
                             const link = document.createElement('a');
                             link.href = item.book.downloadUrl;
-                            link.download = `${item.book.title.replace(/\s+/g, '_')}.${item.book.fileType || 'epub'}`;
+                            link.download = cleanName;
                             document.body.appendChild(link);
                             link.click();
                             document.body.removeChild(link);
@@ -281,10 +300,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                             const url = URL.createObjectURL(blob);
                             const link = document.createElement('a');
                             link.href = url;
-                            link.download = `${item.book.title.replace(/\s+/g, '_')}.${item.book.fileType || 'epub'}`;
+                            link.download = cleanName;
                             document.body.appendChild(link);
                             link.click();
                             document.body.removeChild(link);
+                            setTimeout(() => URL.revokeObjectURL(url), 10000);
                           }
                         }}
                         className="px-2.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded transition-colors flex items-center gap-1"
@@ -373,6 +393,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     src={item.book.coverUrl}
                     alt={item.book.title}
                     className="w-12 h-16 object-cover rounded-xs book-spine-shadow shrink-0"
+                    referrerPolicy="no-referrer"
                   />
                   <div className="flex-1 min-w-0">
                     <h4 className="text-xs font-bold text-stone-900 truncate">{item.book.title}</h4>

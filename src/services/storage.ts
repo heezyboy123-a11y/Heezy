@@ -1,6 +1,7 @@
 import { Book, Order, DeliveryCity, User } from '../types/book';
 import { INITIAL_BOOKS, INITIAL_DELIVERY_CITIES } from '../data/initialBooks';
 import { generateCanvasBookCover, CoverThemeId } from './coverGenerator';
+import { deleteBookFileBlob } from './fileStore';
 
 const BOOKS_STORAGE_KEY = 'openshelf_books_v1';
 const ORDERS_STORAGE_KEY = 'openshelf_orders_v1';
@@ -111,14 +112,29 @@ export function getStoredBooks(): Book[] {
   }
 }
 
+function sanitizeBookForCache(b: Book): Book {
+  const isSessionBlob = b.downloadUrl?.startsWith('blob:');
+  const isHugeDataUrl = b.downloadUrl && b.downloadUrl.startsWith('data:') && b.downloadUrl.length > 150000;
+  return {
+    ...b,
+    // Full binaries live in IndexedDB; only keep persistent URLs or small data URLs in localStorage
+    downloadUrl: isSessionBlob || isHugeDataUrl ? undefined : b.downloadUrl,
+  };
+}
+
 export async function fetchServerBooks(): Promise<Book[]> {
   try {
     const res = await fetch('/api/books');
-    if (res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && contentType.includes('application/json')) {
       const rawBooks: Book[] = await res.json();
       if (Array.isArray(rawBooks) && rawBooks.length > 0) {
-        // Preserve any custom covers already stored locally so they are never lost
         const localBooks = getStoredBooks();
+        const serverIds = new Set(rawBooks.map((b) => b.id));
+
+        // Preserve any locally uploaded books (e.g. from static Vercel/offline sessions)
+        const localOnlyBooks = localBooks.filter((lb) => lb.isUserUploaded && !serverIds.has(lb.id));
+
         const mergedServerBooks = rawBooks.map((serverBook) => {
           const match = localBooks.find(
             (lb) =>
@@ -130,9 +146,10 @@ export async function fetchServerBooks(): Promise<Book[]> {
           }
           return serverBook;
         });
-        const serverBooks = fillMissingCovers(mergedServerBooks);
-        localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(serverBooks));
-        return serverBooks;
+
+        const combined = fillMissingCovers([...localOnlyBooks, ...mergedServerBooks]);
+        saveBooks(combined);
+        return combined;
       }
     }
   } catch (err) {
@@ -142,15 +159,16 @@ export async function fetchServerBooks(): Promise<Book[]> {
 }
 
 export function saveBooks(books: Book[]): void {
+  const sanitized = books.map(sanitizeBookForCache);
   try {
-    localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(books));
+    localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(sanitized));
   } catch (err) {
-    console.warn('LocalStorage quota limit reached, saving optimized cache:', err);
+    console.warn('LocalStorage quota limit reached, saving ultra-light cache:', err);
     try {
-      // Strip oversized data payloads (>40KB) from localStorage cache to prevent quota errors
-      const lightweight = books.map((b) => ({
+      const lightweight = sanitized.map((b) => ({
         ...b,
-        downloadUrl: b.downloadUrl && b.downloadUrl.length > 40000 ? undefined : b.downloadUrl,
+        downloadUrl: undefined,
+        coverUrl: b.coverUrl && b.coverUrl.length > 60000 ? '' : b.coverUrl,
       }));
       localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(lightweight));
     } catch (e2) {
@@ -160,17 +178,47 @@ export function saveBooks(books: Book[]): void {
 }
 
 export async function addBook(newBook: Book): Promise<Book[]> {
+  return addBooksBatch([newBook]);
+}
+
+export async function addBooksBatch(newBooks: Book[]): Promise<Book[]> {
   const current = getStoredBooks();
-  const updated = [newBook, ...current];
+  // Avoid duplicates by title+author or id
+  const incomingTitles = new Set(newBooks.map((b) => b.title.toLowerCase().trim()));
+  const filteredCurrent = current.filter(
+    (b) => !newBooks.some((nb) => nb.id === b.id) && !incomingTitles.has(b.title.toLowerCase().trim())
+  );
+  const updated = [...newBooks, ...filteredCurrent];
   saveBooks(updated);
 
-  // Sync with persistent backend database
+  // Sync each lightweight record to backend database (reverse order so newest ends up at top)
+  for (const book of [...newBooks].reverse()) {
+    try {
+      const payload = sanitizeBookForCache(book);
+      fetch('/api/books', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch((e) => console.warn('Background sync error:', e));
+    } catch (err) {
+      console.warn('Network sync error:', err);
+    }
+  }
+
+  return updated;
+}
+
+export async function updateBook(updatedBook: Book): Promise<Book[]> {
+  const current = getStoredBooks();
+  const updated = current.map((b) => (b.id === updatedBook.id ? updatedBook : b));
+  saveBooks(updated);
+
   try {
-    fetch('/api/books', {
-      method: 'POST',
+    fetch(`/api/books/${updatedBook.id}`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newBook),
-    }).catch((e) => console.warn('Background sync error:', e));
+      body: JSON.stringify(sanitizeBookForCache(updatedBook)),
+    }).catch((e) => console.warn('Background update error:', e));
   } catch (err) {
     console.warn('Network sync error:', err);
   }
@@ -182,6 +230,7 @@ export async function deleteBook(id: string): Promise<Book[]> {
   const current = getStoredBooks();
   const updated = current.filter((b) => b.id !== id);
   saveBooks(updated);
+  deleteBookFileBlob(id).catch(() => {});
 
   try {
     fetch(`/api/books/${id}`, { method: 'DELETE' }).catch((e) =>

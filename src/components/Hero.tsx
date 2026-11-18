@@ -144,6 +144,7 @@ export const Hero: React.FC<HeroProps> = ({
                             src={book.coverUrl}
                             alt={book.title}
                             className="w-8 h-11 object-cover rounded-xs book-spine-shadow shrink-0 bg-stone-100"
+                            referrerPolicy="no-referrer"
                           />
                           <div className="min-w-0">
                             <span className="font-semibold text-stone-900 block truncate">

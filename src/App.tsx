@@ -8,6 +8,9 @@ import {
   fetchServerOrders,
   fetchServerCities,
   addBook,
+  addBooksBatch,
+  updateBook,
+  deleteBook,
   getCurrentUser,
   setCurrentUser as persistUser,
   getStoredWishlist,
@@ -102,6 +105,32 @@ export default function App() {
     const updated = await addBook(newBook);
     setBooks(updated);
     showToast(`"${newBook.title}" was published to Open Shelf!`);
+  };
+
+  const handleBooksBatchUploaded = async (newBooks: Book[]) => {
+    if (newBooks.length === 0) return;
+    const updated = await addBooksBatch(newBooks);
+    setBooks(updated);
+    showToast(
+      newBooks.length === 1
+        ? `"${newBooks[0].title}" was published cleanly to Open Shelf!`
+        : `${newBooks.length} ebooks imported, cleaned, and positioned on Open Shelf!`
+    );
+  };
+
+  const handleUpdateBook = async (updatedBook: Book) => {
+    const updated = await updateBook(updatedBook);
+    setBooks(updated);
+    setSelectedBook(updatedBook);
+    showToast(`Updated "${updatedBook.title}"`);
+  };
+
+  const handleDeleteBook = async (bookId: string) => {
+    const target = books.find((b) => b.id === bookId);
+    const updated = await deleteBook(bookId);
+    setBooks(updated);
+    setSelectedBook(null);
+    showToast(target ? `Removed "${target.title}" from Open Shelf` : 'Book removed');
   };
 
   // Cart operations
@@ -515,6 +544,9 @@ export default function App() {
             setSelectedBook(null);
             setReadingBook(b);
           }}
+          currentUser={currentUser}
+          onUpdateBook={handleUpdateBook}
+          onDeleteBook={handleDeleteBook}
         />
       )}
 
@@ -537,6 +569,7 @@ export default function App() {
         <UploadModal
           onClose={() => setIsUploadOpen(false)}
           onBookUploaded={handleBookUploaded}
+          onBooksBatchUploaded={handleBooksBatchUploaded}
           currentUser={currentUser}
         />
       )}

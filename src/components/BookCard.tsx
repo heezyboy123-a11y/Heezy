@@ -21,6 +21,7 @@ export const BookCard: React.FC<BookCardProps> = ({
   isWishlisted = false,
   onToggleWishlist,
 }) => {
+  const [imgFailed, setImgFailed] = React.useState(false);
   const isFree = book.priceUSD === 0;
 
   // Format price display
@@ -66,12 +67,13 @@ export const BookCard: React.FC<BookCardProps> = ({
         )}
 
         <div className="relative w-full max-w-[200px] aspect-3/4 rounded-xs overflow-hidden book-spine-shadow transition-transform duration-300 group-hover:scale-102">
-          {book.coverUrl ? (
+          {book.coverUrl && !imgFailed ? (
             <img
               src={book.coverUrl}
               alt={`Book cover of ${book.title}`}
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
+              onError={() => setImgFailed(true)}
             />
           ) : (
             <div className="w-full h-full bg-[#1A2538] text-white flex flex-col items-center justify-center p-4 text-center">

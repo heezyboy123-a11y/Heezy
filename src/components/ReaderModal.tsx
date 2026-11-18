@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Book } from '../types/book';
-import { X, Download, ZoomIn, ZoomOut, Type, Sun, Moon, BookOpen } from 'lucide-react';
+import { X, Download, ZoomIn, ZoomOut, Type, BookOpen, FileText } from 'lucide-react';
+import { getBookFileBlob } from '../services/fileStore';
+import { buildCleanFileName } from '../services/ebookCleaner';
 
 interface ReaderModalProps {
   book: Book;
@@ -13,6 +15,39 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ book, onClose }) => {
   const [fontSize, setFontSize] = useState<number>(18);
   const [fontFamily, setFontFamily] = useState<'serif' | 'sans'>('serif');
   const [paperTheme, setPaperTheme] = useState<PaperTheme>('cream');
+  const [pdfViewerUrl, setPdfViewerUrl] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'text' | 'pdf'>('text');
+
+  // Check if a full PDF binary exists in IndexedDB for inline viewing
+  useEffect(() => {
+    let createdObjectUrl: string | null = null;
+    let active = true;
+
+    async function loadFilePreview() {
+      if (book.fileType === 'pdf') {
+        const stored = await getBookFileBlob(book.id);
+        if (active && stored?.blob) {
+          createdObjectUrl = URL.createObjectURL(stored.blob);
+          setPdfViewerUrl(createdObjectUrl);
+          setViewMode('pdf');
+          return;
+        }
+        if (active && book.downloadUrl && (book.downloadUrl.startsWith('data:application/pdf') || book.downloadUrl.startsWith('blob:'))) {
+          setPdfViewerUrl(book.downloadUrl);
+          setViewMode('pdf');
+        }
+      }
+    }
+
+    loadFilePreview();
+
+    return () => {
+      active = false;
+      if (createdObjectUrl) {
+        URL.revokeObjectURL(createdObjectUrl);
+      }
+    };
+  }, [book.id, book.fileType, book.downloadUrl]);
 
   const themeClasses: Record<PaperTheme, { bg: string; text: string; header: string; border: string }> = {
     cream: {
@@ -37,27 +72,46 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ book, onClose }) => {
 
   const currentTheme = themeClasses[paperTheme];
 
-  const handleDownload = () => {
-    if (book.downloadUrl) {
+  const handleDownload = async () => {
+    const cleanDownloadName =
+      book.cleanFileName || buildCleanFileName(book.title, book.fileType || 'epub');
+
+    // 1. Check IndexedDB full binary first (works across reloads for large PDFs/EPUBs)
+    const stored = await getBookFileBlob(book.id);
+    if (stored?.blob) {
+      const objUrl = URL.createObjectURL(stored.blob);
+      const link = document.createElement('a');
+      link.href = objUrl;
+      link.download = cleanDownloadName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+      return;
+    }
+
+    // 2. Fallback to book.downloadUrl if persistent (data: or https:)
+    if (book.downloadUrl && !book.downloadUrl.startsWith('blob:')) {
       const link = document.createElement('a');
       link.href = book.downloadUrl;
-      link.download = `${book.title.replace(/\s+/g, '_')}.${book.fileType || 'epub'}`;
+      link.download = cleanDownloadName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       return;
     }
 
-    // Generate downloadable text/epub data blob
+    // 3. Fallback: generate clean downloadable reading copy
     const content = `${book.title.toUpperCase()}\nBy ${book.author}\nPublished: ${book.year || 'N/A'}\nGenre: ${book.genre}\n\n${book.description}\n\n=================================\n\n${book.sampleContent || 'Enjoy reading this Open Shelf edition.'}`;
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${book.title.replace(/\s+/g, '_')}.${book.fileType || 'epub'}`;
+    link.download = cleanDownloadName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
   return (
@@ -83,64 +137,90 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ book, onClose }) => {
 
           {/* Reader Preferences Bar */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {/* Font Family Toggle */}
-            <button
-              onClick={() => setFontFamily(fontFamily === 'serif' ? 'sans' : 'serif')}
-              className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 text-xs font-semibold flex items-center gap-1"
-              title="Toggle Serif / Sans font"
-            >
-              <Type className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline font-mono">{fontFamily.toUpperCase()}</span>
-            </button>
+            {pdfViewerUrl && (
+              <div className="flex items-center border rounded p-0.5 text-xs">
+                <button
+                  onClick={() => setViewMode('pdf')}
+                  className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1 ${
+                    viewMode === 'pdf' ? 'bg-stone-900 text-white' : 'opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span>Full PDF</span>
+                </button>
+                <button
+                  onClick={() => setViewMode('text')}
+                  className={`px-2 py-1 rounded text-[11px] font-semibold ${
+                    viewMode === 'text' ? 'bg-stone-900 text-white' : 'opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  Summary
+                </button>
+              </div>
+            )}
 
-            {/* Font Size Steppers */}
-            <div className="flex items-center border rounded px-1 text-xs">
-              <button
-                onClick={() => setFontSize(Math.max(14, fontSize - 2))}
-                className="p-1 hover:opacity-75"
-                title="Decrease font size"
-              >
-                <ZoomOut className="w-3.5 h-3.5" />
-              </button>
-              <span className="px-1.5 font-mono text-[11px]">{fontSize}px</span>
-              <button
-                onClick={() => setFontSize(Math.min(28, fontSize + 2))}
-                className="p-1 hover:opacity-75"
-                title="Increase font size"
-              >
-                <ZoomIn className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            {viewMode === 'text' && (
+              <>
+                {/* Font Family Toggle */}
+                <button
+                  onClick={() => setFontFamily(fontFamily === 'serif' ? 'sans' : 'serif')}
+                  className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/10 text-xs font-semibold flex items-center gap-1"
+                  title="Toggle Serif / Sans font"
+                >
+                  <Type className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline font-mono">{fontFamily.toUpperCase()}</span>
+                </button>
 
-            {/* Theme Toggles */}
-            <div className="flex items-center gap-1 border rounded p-0.5">
-              <button
-                onClick={() => setPaperTheme('cream')}
-                className={`w-5 h-5 rounded-full bg-[#FBF9F5] border border-stone-300 ${
-                  paperTheme === 'cream' ? 'ring-2 ring-stone-800' : ''
-                }`}
-                title="Cream paper"
-              />
-              <button
-                onClick={() => setPaperTheme('sepia')}
-                className={`w-5 h-5 rounded-full bg-[#F5EEDC] border border-stone-300 ${
-                  paperTheme === 'sepia' ? 'ring-2 ring-amber-800' : ''
-                }`}
-                title="Sepia parchment"
-              />
-              <button
-                onClick={() => setPaperTheme('dark')}
-                className={`w-5 h-5 rounded-full bg-[#18191B] border border-stone-600 ${
-                  paperTheme === 'dark' ? 'ring-2 ring-stone-300' : ''
-                }`}
-                title="Night dark mode"
-              />
-            </div>
+                {/* Font Size Steppers */}
+                <div className="hidden sm:flex items-center border rounded px-1 text-xs">
+                  <button
+                    onClick={() => setFontSize(Math.max(14, fontSize - 2))}
+                    className="p-1 hover:opacity-75"
+                    title="Decrease font size"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="px-1.5 font-mono text-[11px]">{fontSize}px</span>
+                  <button
+                    onClick={() => setFontSize(Math.min(28, fontSize + 2))}
+                    className="p-1 hover:opacity-75"
+                    title="Increase font size"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Theme Toggles */}
+                <div className="flex items-center gap-1 border rounded p-0.5">
+                  <button
+                    onClick={() => setPaperTheme('cream')}
+                    className={`w-5 h-5 rounded-full bg-[#FBF9F5] border border-stone-300 ${
+                      paperTheme === 'cream' ? 'ring-2 ring-stone-800' : ''
+                    }`}
+                    title="Cream paper"
+                  />
+                  <button
+                    onClick={() => setPaperTheme('sepia')}
+                    className={`w-5 h-5 rounded-full bg-[#F5EEDC] border border-stone-300 ${
+                      paperTheme === 'sepia' ? 'ring-2 ring-amber-800' : ''
+                    }`}
+                    title="Sepia parchment"
+                  />
+                  <button
+                    onClick={() => setPaperTheme('dark')}
+                    className={`w-5 h-5 rounded-full bg-[#18191B] border border-stone-600 ${
+                      paperTheme === 'dark' ? 'ring-2 ring-stone-300' : ''
+                    }`}
+                    title="Night dark mode"
+                  />
+                </div>
+              </>
+            )}
 
             {/* Download button */}
             <button
               onClick={handleDownload}
-              className="px-2.5 py-1.5 rounded text-xs font-semibold bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900 hover:opacity-90 flex items-center gap-1 transition-opacity"
+              className="px-2.5 py-1.5 rounded text-xs font-semibold bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900 hover:opacity-90 flex items-center gap-1 transition-opacity cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Download File</span>
@@ -156,39 +236,49 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ book, onClose }) => {
           </div>
         </div>
 
-        {/* Reader Document Content */}
-        <div className="flex-1 overflow-y-auto px-6 sm:px-16 py-10 sm:py-14">
-          <div className="max-w-2xl mx-auto space-y-8">
-            {/* Title Page Lockup */}
-            <div className="text-center pb-8 border-b border-black/10 dark:border-white/10 space-y-2">
-              <p className="text-xs uppercase tracking-widest font-mono opacity-60">
-                {book.genre} {book.year ? `· ${book.year}` : ''}
-              </p>
-              <h1 className="font-serif text-3xl sm:text-4xl font-bold leading-tight">
-                {book.title}
-              </h1>
-              <p className="text-sm sm:text-base font-medium opacity-80">
-                by {book.author}
-              </p>
-            </div>
+        {/* Reader Content: Full PDF Viewer or Distraction-Free Prose */}
+        {viewMode === 'pdf' && pdfViewerUrl ? (
+          <div className="flex-1 w-full bg-stone-800">
+            <iframe
+              src={pdfViewerUrl}
+              title={book.title}
+              className="w-full h-full border-0"
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto px-6 sm:px-16 py-10 sm:py-14">
+            <div className="max-w-2xl mx-auto space-y-8">
+              {/* Title Page Lockup */}
+              <div className="text-center pb-8 border-b border-black/10 dark:border-white/10 space-y-2">
+                <p className="text-xs uppercase tracking-widest font-mono opacity-60">
+                  {book.genre} {book.year ? `· ${book.year}` : ''}
+                </p>
+                <h1 className="font-serif text-3xl sm:text-4xl font-bold leading-tight">
+                  {book.title}
+                </h1>
+                <p className="text-sm sm:text-base font-medium opacity-80">
+                  by {book.author}
+                </p>
+              </div>
 
-            {/* Reading Text */}
-            <div
-              className={`leading-relaxed whitespace-pre-line tracking-normal ${
-                fontFamily === 'serif' ? 'font-serif' : 'font-sans'
-              }`}
-              style={{ fontSize: `${fontSize}px`, lineHeight: 1.7 }}
-            >
-              {book.sampleContent ||
-                `CHAPTER 1\n\nThe rain began just as the afternoon shadows stretched across the harbor. The fishermen were pulling their boats onto the pebbles, their oilskins shining in the gray light...\n\nEvery journey through a book is an invitation to inhabit another consciousness. Here in the Open Shelf collection, independent works are preserved and distributed directly to readers worldwide.`}
-            </div>
+              {/* Reading Text */}
+              <div
+                className={`leading-relaxed whitespace-pre-line tracking-normal ${
+                  fontFamily === 'serif' ? 'font-serif' : 'font-sans'
+                }`}
+                style={{ fontSize: `${fontSize}px`, lineHeight: 1.7 }}
+              >
+                {book.sampleContent ||
+                  `CHAPTER 1\n\nThe rain began just as the afternoon shadows stretched across the harbor. The fishermen were pulling their boats onto the pebbles, their oilskins shining in the gray light...\n\nEvery journey through a book is an invitation to inhabit another consciousness. Here in the Open Shelf collection, independent works are preserved and distributed directly to readers worldwide.`}
+              </div>
 
-            {/* Chapter End Mark */}
-            <div className="pt-12 text-center text-xs opacity-50 font-serif italic">
-              · · · Open Shelf Reader Sanctuary · · ·
+              {/* Chapter End Mark */}
+              <div className="pt-12 text-center text-xs opacity-50 font-serif italic">
+                · · · Open Shelf Reader Sanctuary · · ·
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
