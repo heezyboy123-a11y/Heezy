@@ -9,5 +9,5 @@
   "accountNumber": "",
   "accountName": "",
   "ownerWhatsapp": "",
-  "enableBankTransfer": true
+  "enableBankTransfer": false
 }
