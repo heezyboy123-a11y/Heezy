@@ -1,7 +1,8 @@
 import { Book, Order, DeliveryCity, User } from '../types/book';
 import { INITIAL_BOOKS, INITIAL_DELIVERY_CITIES } from '../data/initialBooks';
 import { generateCanvasBookCover, CoverThemeId } from './coverGenerator';
-import { deleteBookFileBlob } from './fileStore';
+import { deleteBookFileBlob, getBookFileBlob } from './fileStore';
+import { extractOriginalCoverFromBlob, lookupOfficialBookDetails, stripSiteWatermarks } from './ebookCleaner';
 
 const BOOKS_STORAGE_KEY = 'openshelf_books_v1';
 const ORDERS_STORAGE_KEY = 'openshelf_orders_v1';
@@ -63,17 +64,32 @@ function prepareInitialBooks(): Book[] {
   return fillMissingCovers(INITIAL_BOOKS);
 }
 
+const LEGACY_PLACEHOLDER_IDS = new Set([
+  'book-1',
+  'book-2',
+  'book-3',
+  'book-4',
+  'book-5',
+  'book-6',
+  'book-7',
+  'book-8',
+  'book-9',
+  'book-wonderfully-made',
+  'book-elon-musk',
+]);
+
+const STORE_OWNER_EMAILS = new Set(['heezyboy123@gmail.com', 'itljies@gmail.com']);
+
 // Helper to determine if a user has Store Owner / Master Administrator privileges
 export function isStoreOwnerUser(user: User | null): boolean {
   if (!user) return false;
   const email = (user.email || '').toLowerCase().trim();
-  const name = (user.name || '').toLowerCase().trim();
-  return (
-    user.role === 'admin' ||
-    email === 'heezyboy123@gmail.com' ||
-    email === 'itljies@gmail.com' ||
-    email.includes('heezy') ||
-    name.includes('heezy')
+  return STORE_OWNER_EMAILS.has(email) || user.role === 'admin';
+}
+
+function filterRealBooks(list: Book[]): Book[] {
+  return list.filter(
+    (b) => b && !LEGACY_PLACEHOLDER_IDS.has(b.id) && b.isUserUploaded === true
   );
 }
 
@@ -84,31 +100,22 @@ export function isStoreOwnerUser(user: User | null): boolean {
 export function getStoredBooks(): Book[] {
   try {
     const raw = localStorage.getItem(BOOKS_STORAGE_KEY);
-    const initial = prepareInitialBooks();
     if (!raw) {
-      localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(initial));
-      return initial;
+      localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(INITIAL_BOOKS));
+      return INITIAL_BOOKS;
     }
     const parsed: Book[] = JSON.parse(raw);
-    // Ensure all core books exist and maintain accurate genres (Wonderfully Made in Self-Help, Elon Musk in Biography)
-    const merged = [...parsed];
-    for (const initBook of initial) {
-      const foundIdx = merged.findIndex(
-        (b) => b.id === initBook.id || b.title.toLowerCase().trim() === initBook.title.toLowerCase().trim()
-      );
-      if (foundIdx === -1) {
-        merged.push(initBook);
-      } else {
-        // Sync corrected genre & metadata
-        merged[foundIdx].genre = initBook.genre;
-        if (!merged[foundIdx].coverUrl) {
-          merged[foundIdx].coverUrl = initBook.coverUrl;
-        }
-      }
+    const realOnly = filterRealBooks(parsed).map((b) => ({
+      ...b,
+      title: stripSiteWatermarks(b.title) || b.title,
+      author: stripSiteWatermarks(b.author) || b.author,
+    }));
+    if (realOnly.length !== parsed.length) {
+      saveBooks(realOnly);
     }
-    return fillMissingCovers(merged);
+    return fillMissingCovers(realOnly);
   } catch {
-    return prepareInitialBooks();
+    return [];
   }
 }
 
@@ -128,21 +135,21 @@ export async function fetchServerBooks(): Promise<Book[]> {
     const contentType = res.headers.get('content-type') || '';
     if (res.ok && contentType.includes('application/json')) {
       const rawBooks: Book[] = await res.json();
-      if (Array.isArray(rawBooks) && rawBooks.length > 0) {
+      if (Array.isArray(rawBooks)) {
         const localBooks = getStoredBooks();
-        const serverIds = new Set(rawBooks.map((b) => b.id));
+        const serverRealBooks = filterRealBooks(rawBooks);
+        const serverIds = new Set(serverRealBooks.map((b) => b.id));
 
-        // Preserve any locally uploaded books (e.g. from static Vercel/offline sessions)
         const localOnlyBooks = localBooks.filter((lb) => lb.isUserUploaded && !serverIds.has(lb.id));
 
-        const mergedServerBooks = rawBooks.map((serverBook) => {
+        const mergedServerBooks = serverRealBooks.map((serverBook) => {
           const match = localBooks.find(
             (lb) =>
               lb.id === serverBook.id ||
               lb.title.toLowerCase().trim() === serverBook.title.toLowerCase().trim()
           );
           if (match && match.coverUrl && !serverBook.coverUrl) {
-            return { ...serverBook, coverUrl: match.coverUrl };
+            return { ...serverBook, coverUrl: match.coverUrl, coverOrigin: match.coverOrigin };
           }
           return serverBook;
         });
@@ -156,6 +163,85 @@ export async function fetchServerBooks(): Promise<Book[]> {
     console.warn('Using local books cache:', err);
   }
   return getStoredBooks();
+}
+
+/**
+ * Upgrades previously uploaded books that still lack their original Page 1 / embedded / official cover.
+ */
+export async function upgradeStoredBooksCovers(bookList: Book[]): Promise<Book[]> {
+  let changed = false;
+  const upgraded: Book[] = [];
+
+  for (const book of bookList) {
+    const alreadyOriginal =
+      book.coverOrigin === 'page1' ||
+      book.coverOrigin === 'embedded' ||
+      book.coverOrigin === 'custom';
+
+    const looksLikeGeneratedCanvas =
+      !book.coverUrl ||
+      book.coverUrl.startsWith('data:image/svg') ||
+      book.coverOrigin === 'canvas';
+
+    if (!alreadyOriginal && looksLikeGeneratedCanvas) {
+      // 1. Check IndexedDB for the original PDF/EPUB binary to extract Page 1 cover
+      const storedFile = await getBookFileBlob(book.id);
+      if (storedFile?.blob) {
+        const extracted = await extractOriginalCoverFromBlob(
+          storedFile.blob,
+          book.fileType || 'pdf'
+        );
+        if (extracted.coverUrl) {
+          const updatedBook: Book = {
+            ...book,
+            coverUrl: extracted.coverUrl,
+            coverOrigin: extracted.coverOrigin,
+            pageCount: book.pageCount || extracted.pageCount,
+            sampleContent:
+              extracted.sampleContent &&
+              (!book.sampleContent || book.sampleContent.startsWith('PREVIEW EXCERPT'))
+                ? extracted.sampleContent
+                : book.sampleContent,
+          };
+          changed = true;
+          upgraded.push(updatedBook);
+          fetch(`/api/books/${book.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sanitizeBookForCache(updatedBook)),
+          }).catch(() => {});
+          continue;
+        }
+      }
+
+      // 2. Fallback: fetch official published book cover if no local binary is present
+      if (book.coverOrigin !== 'official') {
+        const official = await lookupOfficialBookDetails(book.title, book.author);
+        if (official.coverUrl) {
+          const updatedBook: Book = {
+            ...book,
+            coverUrl: official.coverUrl,
+            coverOrigin: 'official',
+          };
+          changed = true;
+          upgraded.push(updatedBook);
+          fetch(`/api/books/${book.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sanitizeBookForCache(updatedBook)),
+          }).catch(() => {});
+          continue;
+        }
+      }
+    }
+
+    upgraded.push(book);
+  }
+
+  if (changed) {
+    saveBooks(upgraded);
+  }
+  return upgraded;
 }
 
 export function saveBooks(books: Book[]): void {
@@ -418,23 +504,19 @@ export function setCurrentUser(user: User | null): void {
 export function loginOrRegisterUser({
   email,
   name,
-  role = 'reader',
 }: {
   email: string;
   name?: string;
   role?: 'reader' | 'author' | 'admin';
 }): User {
   const cleanEmail = email.toLowerCase().trim();
-  const isOwner =
-    cleanEmail === 'itljies@gmail.com' ||
-    cleanEmail === 'heezyboy123@gmail.com' ||
-    cleanEmail.startsWith('heezy');
-  const effectiveRole = isOwner ? 'admin' : role;
+  const isOwner = STORE_OWNER_EMAILS.has(cleanEmail);
+  const effectiveRole: User['role'] = isOwner ? 'admin' : 'reader';
   const effectiveName = name?.trim() || (isOwner ? 'Store Owner (Heezy)' : email.split('@')[0]);
 
   const user: User = {
     id: `usr_${Date.now()}`,
-    email: email.toLowerCase().trim(),
+    email: cleanEmail,
     name: effectiveName,
     role: effectiveRole,
     joinedAt: new Date().toISOString(),

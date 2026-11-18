@@ -21,6 +21,7 @@ interface HeroProps {
   allBooks: Book[];
   onSelectBook: (book: Book) => void;
   onQuickFilter: (tag: string) => void;
+  isStoreOwner?: boolean;
 }
 
 export const Hero: React.FC<HeroProps> = ({
@@ -32,6 +33,7 @@ export const Hero: React.FC<HeroProps> = ({
   allBooks,
   onSelectBook,
   onQuickFilter,
+  isStoreOwner = false,
 }) => {
   const [isFocused, setIsFocused] = useState(false);
   const [featuredIndex, setFeaturedIndex] = useState(0);
@@ -225,7 +227,7 @@ export const Hero: React.FC<HeroProps> = ({
               </div>
 
               {/* Spotlight Book Presentation Area (No Human Images, Pure Book Aesthetics) */}
-              {activeSpotlightBook && (
+              {activeSpotlightBook ? (
                 <div className="p-5 bg-gradient-to-b from-[#F7F4EC] to-white border-b border-stone-200/80 space-y-4">
                   <div className="flex items-start gap-4 sm:gap-5">
                     {/* Realistic 3D Book Cover View */}
@@ -330,24 +332,55 @@ export const Hero: React.FC<HeroProps> = ({
                     </div>
                   )}
                 </div>
+              ) : (
+                <div className="p-6 bg-gradient-to-b from-[#F7F4EC] to-white border-b border-stone-200/80 space-y-2 text-center">
+                  <BookOpen className="w-8 h-8 mx-auto text-stone-700" />
+                  <h4 className="font-serif text-lg font-bold text-stone-900">
+                    Curated Real Books Shelf
+                  </h4>
+                  <p className="text-xs text-stone-600 leading-relaxed max-w-sm mx-auto">
+                    {isStoreOwner
+                      ? 'Your store shelves are clean and ready. Upload your real ebooks below with original first-page covers and custom prices.'
+                      : 'Original digital ebooks and printed hardcopy editions are currently being stocked by the store owner.'}
+                  </p>
+                </div>
               )}
 
-              {/* Direct Phone Upload Action Strip */}
-              <div className="p-4 bg-stone-50 flex items-center justify-between gap-3">
-                <div className="text-xs text-stone-600">
-                  <span className="font-semibold text-stone-900 block">
-                    Have manuscripts or ebooks on your phone?
-                  </span>
-                  <span>Upload directly with zero hosting fees &amp; canvas cover generator.</span>
+              {/* Bottom Action Strip: Upload exclusively for Store Owner, Browse guarantee for readers */}
+              {isStoreOwner ? (
+                <div className="p-4 bg-stone-50 flex items-center justify-between gap-3">
+                  <div className="text-xs text-stone-600">
+                    <span className="font-semibold text-stone-900 block">
+                      Store Owner Batch Import
+                    </span>
+                    <span>Upload 1–100+ ebooks with Page 1 covers &amp; varied NGN/USD pricing.</span>
+                  </div>
+                  <button
+                    onClick={onOpenUpload}
+                    className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 shrink-0 transition-colors shadow-xs cursor-pointer active:scale-97"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Upload Books</span>
+                  </button>
                 </div>
-                <button
-                  onClick={onOpenUpload}
-                  className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 shrink-0 transition-colors shadow-xs cursor-pointer active:scale-97"
-                >
-                  <UploadCloud className="w-3.5 h-3.5" />
-                  <span>Upload Now</span>
-                </button>
-              </div>
+              ) : (
+                <div className="p-4 bg-stone-50 flex items-center justify-between gap-3">
+                  <div className="text-xs text-stone-600">
+                    <span className="font-semibold text-stone-900 block">
+                      Original Digital &amp; Print Hardcopies
+                    </span>
+                    <span>Instant ebook delivery worldwide or city courier doorstep shipping.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById('catalog-shelf')?.scrollIntoView({ behavior: 'smooth' })}
+                    className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 shrink-0 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span>Browse Books</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

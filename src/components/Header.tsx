@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BookOpen, ShoppingBag, Upload, Truck, SlidersHorizontal, User as UserIcon, LogOut, ShieldCheck, Heart, Share2, Check } from 'lucide-react';
 import { Currency, User } from '../types/book';
+import { isStoreOwnerUser } from '../services/storage';
 
 interface HeaderProps {
   cartCount: number;
@@ -37,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const isStoreOwner = isStoreOwnerUser(currentUser);
 
   const handleCopyLink = () => {
     const liveUrl = window.location.origin.includes('localhost')
@@ -113,14 +115,16 @@ export const Header: React.FC<HeaderProps> = ({
           >
             City Delivery Editions
           </button>
-          <button
-            onClick={onOpenDispatcher}
-            className="flex items-center gap-1.5 text-stone-600 hover:text-stone-900 whitespace-nowrap"
-            title="City Courier Logistics Dashboard"
-          >
-            <Truck className="w-4 h-4 text-stone-500" />
-            <span>Courier Dispatch</span>
-          </button>
+          {isStoreOwner && (
+            <button
+              onClick={onOpenDispatcher}
+              className="flex items-center gap-1.5 text-stone-600 hover:text-stone-900 whitespace-nowrap"
+              title="City Courier Logistics Dashboard"
+            >
+              <Truck className="w-4 h-4 text-stone-500" />
+              <span>Courier Dispatch</span>
+            </button>
+          )}
         </nav>
 
         {/* Zone 3: Primary actions & Controls */}
@@ -179,24 +183,28 @@ export const Header: React.FC<HeaderProps> = ({
                       {wishlistCount}
                     </span>
                   </button>
-                  <button
-                    onClick={() => {
-                      setShowUserMenu(false);
-                      onOpenUpload();
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 hover:bg-stone-100 rounded text-stone-700"
-                  >
-                    Upload New Book
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowUserMenu(false);
-                      onOpenDispatcher();
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 hover:bg-stone-100 rounded text-stone-700"
-                  >
-                    Courier Deliveries
-                  </button>
+                  {isStoreOwner && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onOpenUpload();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 hover:bg-stone-100 rounded text-stone-700 font-medium"
+                      >
+                        Upload Books Studio
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onOpenDispatcher();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 hover:bg-stone-100 rounded text-stone-700"
+                      >
+                        Courier Deliveries
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={() => {
                       setShowUserMenu(false);
@@ -240,24 +248,27 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* Upload Ebook from Phone / Device */}
-          <button
-            onClick={onOpenUpload}
-            className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 text-xs font-semibold text-stone-800 bg-[#EFECE5] hover:bg-[#E5E1D8] border border-[#DDD8CD] rounded-md transition-colors whitespace-nowrap"
-          >
-            <Upload className="w-3.5 h-3.5 text-stone-700" />
-            <span className="hidden sm:inline">Upload Ebook</span>
-            <span className="sm:hidden">Upload</span>
-          </button>
+          {/* Store Owner Exclusive Upload & Settings Controls */}
+          {isStoreOwner && (
+            <>
+              <button
+                onClick={onOpenUpload}
+                className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 text-xs font-semibold text-stone-800 bg-[#EFECE5] hover:bg-[#E5E1D8] border border-[#DDD8CD] rounded-md transition-colors whitespace-nowrap"
+              >
+                <Upload className="w-3.5 h-3.5 text-stone-700" />
+                <span className="hidden sm:inline">Upload Books</span>
+                <span className="sm:hidden">Upload</span>
+              </button>
 
-          {/* Paystack settings */}
-          <button
-            onClick={onOpenSettings}
-            className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
-            title="Paystack & Store Settings"
-          >
-            <SlidersHorizontal className="w-4 h-4" />
-          </button>
+              <button
+                onClick={onOpenSettings}
+                className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
+                title="Paystack & Store Settings"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+              </button>
+            </>
+          )}
 
           {/* Wishlist Button */}
           <button

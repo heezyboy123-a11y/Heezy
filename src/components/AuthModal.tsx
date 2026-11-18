@@ -67,8 +67,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </h2>
               <p className="text-xs text-stone-500">
                 {mode === 'signin'
-                  ? 'Access your purchased ebooks & seller dashboard'
-                  : 'Join our community of readers & independent authors'}
+                  ? 'Access your saved library, wishlist & downloads'
+                  : 'Join our community of readers worldwide'}
               </p>
             </div>
           </div>
@@ -127,14 +127,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-semibold text-stone-700">Email Address *</label>
-              <button
-                type="button"
-                onClick={handleQuickOwnerFill}
-                className="text-[11px] text-stone-500 hover:text-stone-800 underline"
-                title="Fill admin email"
-              >
-                Owner Login (itljies@gmail.com)
-              </button>
             </div>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-stone-400">
@@ -168,35 +160,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
 
           {mode === 'signup' && (
-            <div className="space-y-1.5 pt-1">
-              <label className="text-xs font-semibold text-stone-700 block">I am joining as:</label>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setRole('reader')}
-                  className={`p-2.5 rounded-md border text-left flex items-center gap-2 ${
-                    role === 'reader'
-                      ? 'border-stone-900 bg-stone-50 ring-1 ring-stone-900 font-semibold'
-                      : 'border-stone-200 text-stone-600'
-                  }`}
-                >
-                  <BookOpen className="w-4 h-4 text-stone-700 shrink-0" />
-                  <span>Reader</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRole('author')}
-                  className={`p-2.5 rounded-md border text-left flex items-center gap-2 ${
-                    role === 'author'
-                      ? 'border-stone-900 bg-stone-50 ring-1 ring-stone-900 font-semibold'
-                      : 'border-stone-200 text-stone-600'
-                  }`}
-                >
-                  <PenTool className="w-4 h-4 text-stone-700 shrink-0" />
-                  <span>Author / Seller</span>
-                </button>
-              </div>
-            </div>
+            <p className="text-[11px] text-stone-500 bg-stone-50 p-2.5 rounded border border-stone-200/80">
+              Reader account: Save your favorite books, read instant digital editions, and order hardcopies delivered to your doorstep.
+            </p>
           )}
 
           {error && (

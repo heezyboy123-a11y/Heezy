@@ -11,6 +11,8 @@ import {
   addBooksBatch,
   updateBook,
   deleteBook,
+  upgradeStoredBooksCovers,
+  isStoreOwnerUser,
   getCurrentUser,
   setCurrentUser as persistUser,
   getStoredWishlist,
@@ -89,13 +91,20 @@ export default function App() {
     showToast(added ? `Saved "${book.title}" to Wishlist` : `Removed "${book.title}" from Wishlist`);
   };
 
-  // Load persistent data on mount with live server sync across all devices
+  const isStoreOwner = isStoreOwnerUser(currentUser);
+
+  // Load persistent data on mount, purge non-real books, and upgrade covers to original Page 1 / official covers
   useEffect(() => {
-    setBooks(getStoredBooks());
+    const initialLocal = getStoredBooks();
+    setBooks(initialLocal);
     setOrders(getStoredOrders());
     setDeliveryCities(getStoredCities());
 
-    fetchServerBooks().then((b) => setBooks(b));
+    fetchServerBooks().then(async (serverBooks) => {
+      setBooks(serverBooks);
+      const upgraded = await upgradeStoredBooksCovers(serverBooks);
+      setBooks(upgraded);
+    });
     fetchServerOrders().then((o) => setOrders(o));
     fetchServerCities().then((c) => setDeliveryCities(c));
   }, []);
@@ -254,11 +263,14 @@ export default function App() {
         <Hero
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
-          onOpenUpload={() => setIsUploadOpen(true)}
+          onOpenUpload={() => {
+            if (isStoreOwner) setIsUploadOpen(true);
+          }}
           totalBooksCount={books.length}
           freeBooksCount={freeCount}
           allBooks={books}
           onSelectBook={(b) => setSelectedBook(b)}
+          isStoreOwner={isStoreOwner}
           onQuickFilter={(tag) => {
             if (tag === 'free') {
               setActiveFilter('free');
@@ -389,28 +401,38 @@ export default function App() {
           {filteredBooks.length === 0 ? (
             <div className="py-16 text-center space-y-3 bg-white rounded-xl border border-dashed border-[#DDD8CD]">
               <BookOpen className="w-10 h-10 mx-auto text-stone-400" />
-              <h3 className="font-serif text-xl font-bold text-stone-900">No books found</h3>
+              <h3 className="font-serif text-xl font-bold text-stone-900">
+                {books.length === 0 ? 'Catalog Ready for New Books' : 'No books found'}
+              </h3>
               <p className="text-xs text-stone-500 max-w-sm mx-auto">
-                No titles matched your current filter criteria. Reset your search or upload your own ebook right now.
+                {books.length === 0
+                  ? isStoreOwner
+                    ? 'Placeholder titles have been removed. Upload your real ebooks from your device with Page 1 covers and custom prices.'
+                    : 'Only verified books stocked by the store owner appear here. New titles are being added shortly.'
+                  : 'No titles matched your current filter criteria.'}
               </p>
               <div className="pt-2 flex items-center justify-center gap-2">
-                <button
-                  onClick={() => {
-                    setSearchQuery('');
-                    setActiveFilter('all');
-                    setSelectedGenre('All');
-                  }}
-                  className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-semibold rounded-md transition-colors"
-                >
-                  Reset Filters
-                </button>
-                <button
-                  onClick={() => setIsUploadOpen(true)}
-                  className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5"
-                >
-                  <UploadCloud className="w-3.5 h-3.5" />
-                  <span>Upload Ebook</span>
-                </button>
+                {books.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setSearchQuery('');
+                      setActiveFilter('all');
+                      setSelectedGenre('All');
+                    }}
+                    className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-semibold rounded-md transition-colors"
+                  >
+                    Reset Filters
+                  </button>
+                )}
+                {isStoreOwner && (
+                  <button
+                    onClick={() => setIsUploadOpen(true)}
+                    className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Upload Books</span>
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -464,10 +486,10 @@ export default function App() {
                   <Sparkles className="w-4 h-4 text-rose-300" />
                 </div>
                 <h3 className="font-serif text-lg font-bold text-stone-900">
-                  Upload &amp; Generate Covers
+                  Original Editions &amp; Covers
                 </h3>
                 <p className="text-xs text-stone-600 leading-relaxed">
-                  Have ebooks saved on your phone? Upload them directly with zero platform hosting fees. Use our built-in canvas studio to generate neat, crisp, print-ready book covers.
+                  Every volume on Open Shelf preserves its authentic first-page cover art, clean DRM-free file formatting, and instant in-browser reading preview.
                 </p>
               </div>
             </div>
@@ -486,24 +508,28 @@ export default function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-4 sm:gap-6">
-              <button
-                onClick={() => setIsUploadOpen(true)}
-                className="hover:text-stone-900 transition-colors"
-              >
-                Author Upload Studio
-              </button>
-              <button
-                onClick={() => setIsDispatcherOpen(true)}
-                className="hover:text-stone-900 transition-colors"
-              >
-                City Courier Board
-              </button>
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="hover:text-stone-900 transition-colors"
-              >
-                Paystack Settings
-              </button>
+              {isStoreOwner && (
+                <>
+                  <button
+                    onClick={() => setIsUploadOpen(true)}
+                    className="hover:text-stone-900 transition-colors font-medium"
+                  >
+                    Store Owner Upload Studio
+                  </button>
+                  <button
+                    onClick={() => setIsDispatcherOpen(true)}
+                    className="hover:text-stone-900 transition-colors"
+                  >
+                    City Courier Board
+                  </button>
+                  <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="hover:text-stone-900 transition-colors"
+                  >
+                    Paystack Settings
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => {
                   setLegalTab('terms');
@@ -564,8 +590,8 @@ export default function App() {
         />
       )}
 
-      {/* 3. Author / Seller Upload Studio */}
-      {isUploadOpen && (
+      {/* 3. Store Owner Exclusive Upload Studio */}
+      {isUploadOpen && isStoreOwner && (
         <UploadModal
           onClose={() => setIsUploadOpen(false)}
           onBookUploaded={handleBookUploaded}
@@ -574,8 +600,8 @@ export default function App() {
         />
       )}
 
-      {/* 4. City Dispatcher Courier Logistics Modal */}
-      {isDispatcherOpen && (
+      {/* 4. City Dispatcher Courier Logistics Modal (Owner Only) */}
+      {isDispatcherOpen && isStoreOwner && (
         <DispatcherModal
           onClose={() => setIsDispatcherOpen(false)}
           orders={orders}
@@ -590,8 +616,8 @@ export default function App() {
         <ReaderModal book={readingBook} onClose={() => setReadingBook(null)} />
       )}
 
-      {/* 6. Paystack & Store Configuration Modal */}
-      {isSettingsOpen && (
+      {/* 6. Paystack & Store Configuration Modal (Owner Only) */}
+      {isSettingsOpen && isStoreOwner && (
         <PaystackSettingsModal
           onClose={() => setIsSettingsOpen(false)}
           onConfigSaved={() => showToast('Paystack settings updated successfully')}

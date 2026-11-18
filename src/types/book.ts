@@ -31,6 +31,7 @@ export interface Book {
   priceNGN: number;
   formatAvailable: BookFormat;
   coverUrl: string;
+  coverOrigin?: 'page1' | 'embedded' | 'official' | 'custom' | 'canvas';
   pageCount?: number;
   isbn?: string;
   language?: string;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { OrderItem, Currency, DeliveryCity, Order } from '../types/book';
 import {
   X,
@@ -59,6 +59,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   // Check if cart has physical items
   const hasPhysicalItems = items.some((item) => item.format === 'print');
   const selectedCity = deliveryCities.find((c) => c.id === selectedCityId) || deliveryCities[0];
+
+  // Whenever a buyer orders a hardcopy (print) edition, automatically apply City Courier delivery fee
+  useEffect(() => {
+    if (hasPhysicalItems) {
+      setDestinationType('domestic');
+    }
+  }, [hasPhysicalItems]);
 
   // Calculate pricing
   const subtotalUSD = items.reduce((sum, item) => {
@@ -482,10 +489,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 >
                   <div className="flex items-center gap-1.5 mb-1">
                     <Truck className="w-3.5 h-3.5 text-stone-800" />
-                    <span>City Delivery</span>
+                    <span>Hardcopy City Delivery</span>
                   </div>
                   <span className="text-[11px] text-stone-500 block leading-tight">
-                    Local courier hand-delivery to your doorstep.
+                    Printed hardcopy + city courier delivery fee.
                   </span>
                 </button>
               </div>

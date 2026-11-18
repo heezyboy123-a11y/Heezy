@@ -312,14 +312,14 @@ export const BookDetailModal: React.FC<BookDetailModalProps> = ({
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold text-stone-900 flex items-center gap-1.5">
                         <Truck className="w-3.5 h-3.5 text-stone-700" />
-                        <span>Print Edition</span>
+                        <span>Hardcopy (Print)</span>
                       </span>
                       <span className="font-mono text-xs font-bold text-stone-800">
                         {formatPrice('print')}
                       </span>
                     </div>
                     <span className="text-[11px] text-stone-500 mt-1 block">
-                      Physical paper edition. Delivered by city couriers.
+                      Physical hardcopy edition (+ city courier delivery fee at checkout).
                     </span>
                   </button>
                 </div>

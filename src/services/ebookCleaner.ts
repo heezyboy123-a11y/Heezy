@@ -1,6 +1,11 @@
 import JSZip from 'jszip';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { BookGenre } from '../types/book';
 import { CoverThemeId, generateCanvasBookCover } from './coverGenerator';
+
+// Configure local Vite-bundled PDF.js worker so Page 1 rendering works offline & on Vercel
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export interface AnalyzedEbook {
   rawFileName: string;
@@ -12,7 +17,7 @@ export interface AnalyzedEbook {
   description: string;
   sampleContent: string;
   coverUrl: string;
-  coverSource: 'embedded' | 'official' | 'canvas';
+  coverSource: 'page1' | 'embedded' | 'official' | 'canvas';
   fileType: 'pdf' | 'epub' | 'mobi' | 'txt';
   fileSize: string;
   pageCount?: number;
@@ -93,7 +98,6 @@ function isJunkMetadataValue(val: string): boolean {
 
 function toSmartTitleCase(text: string): string {
   const minorWords = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'in', 'nor', 'of', 'on', 'or', 'so', 'the', 'to', 'up', 'yet', 'with', 'from']);
-  // Only re-case if the string looks all-lowercase, all-uppercase, or mixed oddly
   const hasMixedCase = /[a-z]/.test(text) && /[A-Z]/.test(text);
   const words = text.split(/\s+/).filter(Boolean);
   if (hasMixedCase && words.some((w) => /^[A-Z][a-z]/.test(w))) {
@@ -154,7 +158,6 @@ export function parseBookFilename(rawFileName: string): {
   const fileType = detectFileType(rawFileName);
   const withoutExt = rawFileName.replace(/\.[^/.]+$/, '');
 
-  // Extract optional year like (2023) or [2024]
   let extractedYear: number | undefined;
   const yearMatch = withoutExt.match(/[\(\[]\s*((?:19|20)\d{2})\s*[\)\]]/);
   if (yearMatch) {
@@ -163,21 +166,17 @@ export function parseBookFilename(rawFileName: string): {
   }
 
   let cleaned = stripSiteWatermarks(withoutExt);
-  // Remove trailing year tags like "(2023)" after extracting
   cleaned = cleaned.replace(/\(\s*(?:19|20)\d{2}\s*\)/g, '').trim();
-  // Remove common ebook format noise in filenames like "(EPUB)", "(PDF)"
   cleaned = cleaned.replace(/[\(\[]\s*(?:pdf|epub|mobi|azw3?|ebook|retail|original)\s*[\)\]]/gi, '').trim();
   cleaned = cleaned.replace(/^[\s\-–—]+|[\s\-–—]+$/g, '').trim();
 
   let title = cleaned || 'Untitled Book';
   let author = '';
 
-  // Pattern 1: "Title - Author" or "Title – Author" or "Title — Author"
   const dashSplit = cleaned.split(/\s+[-–—]+\s+/);
   if (dashSplit.length >= 2) {
     const first = dashSplit[0].trim();
     const last = dashSplit[dashSplit.length - 1].trim();
-    // If more than 2 segments, join middle segments into title
     if (dashSplit.length > 2) {
       title = dashSplit.slice(0, -1).join(' - ').trim();
       author = last;
@@ -186,7 +185,6 @@ export function parseBookFilename(rawFileName: string): {
       author = last;
     }
   } else {
-    // Pattern 2: "Title by Author"
     const byMatch = cleaned.match(/^(.+?)\s+by\s+([A-Za-z.\s'-]{3,50})$/i);
     if (byMatch) {
       title = byMatch[1].trim();
@@ -212,7 +210,6 @@ export function inferBookGenre(
 ): BookGenre {
   const haystack = `${title} ${author} ${subjectOrDesc}`.toLowerCase();
 
-  // Specific iconic titles & direct overrides
   if (haystack.includes('wonderfully made')) return 'Self-Help & Personal Growth';
   if (haystack.includes('elon musk') || haystack.includes('walter isaacson') || haystack.includes('steve jobs')) {
     return 'History & Biography';
@@ -241,7 +238,7 @@ export function inferBookGenre(
       genre: 'Motivation & Success',
       keywords: [
         'motivation', 'success', '48 laws', 'laws of power', 'laws of human nature',
-        'grit', 'unstoppable', 'goggins', 'can\'t hurt me', 'think and grow',
+        'grit', 'unstoppable', 'goggins', "can't hurt me", 'think and grow',
         'discipline', 'mastery', 'peak performance', 'winning', 'relentless', 'outwitting',
         'high performance', 'goal', 'ambition', 'champion', 'greatness',
       ],
@@ -389,6 +386,48 @@ export function getGenreCoverTheme(genre: BookGenre): CoverThemeId {
 }
 
 /**
+ * Generates varied ebook pricing starting from ₦3,000 ($2.00) upward
+ * so books on the shelf have natural, realistic price variation.
+ */
+export function suggestVariedBookPrice(
+  title: string,
+  genre: BookGenre,
+  pageCount?: number,
+  indexSeed: number = 0
+): { priceUSD: number; priceNGN: number } {
+  // Varied NGN tiers starting from 3,000 NGN ($2.00) upward
+  const priceTiersNGN = [3000, 3500, 4000, 4500, 5000, 6000, 7500, 8500, 9500, 11000, 12500];
+
+  let hash = indexSeed * 31;
+  for (let i = 0; i < title.length; i++) {
+    hash = (hash * 33 + title.charCodeAt(i)) >>> 0;
+  }
+
+  let tierIdx = hash % 6; // base spread 3,000 - 6,000
+
+  // Larger volumes or specialized business/finance/biography titles trend slightly higher
+  if (pageCount && pageCount >= 400) tierIdx += 3;
+  else if (pageCount && pageCount >= 260) tierIdx += 2;
+  else if (pageCount && pageCount >= 180) tierIdx += 1;
+
+  if (
+    genre === 'Finance & Wealth' ||
+    genre === 'Business & Craft' ||
+    genre === 'History & Biography' ||
+    genre === 'Technology & Society'
+  ) {
+    tierIdx += 1;
+  }
+
+  const priceNGN = priceTiersNGN[Math.min(priceTiersNGN.length - 1, tierIdx)];
+  const priceUSD = Number((priceNGN / 1500).toFixed(2));
+  return {
+    priceUSD: Math.max(2, priceUSD),
+    priceNGN: Math.max(3000, priceNGN),
+  };
+}
+
+/**
  * Compresses an extracted image Blob into a crisp cover JPEG data URL (max 560px wide)
  * so it displays sharply while staying lightweight inside localStorage.
  */
@@ -408,7 +447,7 @@ async function compressImageBlobToDataUrl(blob: Blob): Promise<string> {
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.86);
           URL.revokeObjectURL(imgUrl);
           resolve(dataUrl);
           return;
@@ -430,21 +469,33 @@ async function compressImageBlobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+function resolveZipRelativePath(baseDir: string, relPath: string): string {
+  const cleanRel = decodeURIComponent(relPath.split('#')[0].split('?')[0]);
+  const parts = (baseDir + cleanRel).split('/');
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') resolved.pop();
+    else resolved.push(part);
+  }
+  return resolved.join('/');
+}
+
 /**
- * Extracts real title, author, description, subject, year, and embedded cover image from an EPUB file.
+ * Extracts real title, author, description, subject, year, opening sample, and Page 1 / embedded cover image from an EPUB blob.
  */
-async function extractEpubMetadata(file: File): Promise<{
+async function extractEpubMetadata(file: Blob): Promise<{
   title?: string;
   author?: string;
   description?: string;
   subject?: string;
   year?: number;
   coverDataUrl?: string;
+  sampleContent?: string;
 }> {
   try {
     const zip = await JSZip.loadAsync(file);
 
-    // 1. Locate root OPF path from META-INF/container.xml
     let opfPath = '';
     const containerFile = zip.file('META-INF/container.xml');
     if (containerFile) {
@@ -488,7 +539,6 @@ async function extractEpubMetadata(file: File): Promise<{
     const yMatch = rawDate.match(/(19|20)\d{2}/);
     if (yMatch) year = Number(yMatch[0]);
 
-    // 2. Find embedded cover image in manifest
     const manifestItems = Array.from(opfDoc.getElementsByTagName('item'));
     let coverHref = '';
 
@@ -511,7 +561,36 @@ async function extractEpubMetadata(file: File): Promise<{
       }
     }
 
-    // Method C: manifest item with id/href containing "cover" and image media-type
+    // Method C: Check the very first spine document (Page 1 of the EPUB) for an embedded cover image
+    const spineItemRefs = Array.from(opfDoc.getElementsByTagName('itemref'));
+    if (!coverHref && spineItemRefs.length > 0) {
+      const firstIdRef = spineItemRefs[0].getAttribute('idref');
+      const firstSpineItem = manifestItems.find((i) => i.getAttribute('id') === firstIdRef);
+      const firstPageHref = firstSpineItem?.getAttribute('href') || '';
+      if (firstPageHref) {
+        const fullFirstPath = resolveZipRelativePath(opfDir, firstPageHref);
+        const firstEntry = zip.file(fullFirstPath) || zip.file(firstPageHref);
+        if (firstEntry) {
+          const xhtml = await firstEntry.async('string');
+          const imgMatch =
+            xhtml.match(/<img[^>]+src=["']([^"']+)["']/i) ||
+            xhtml.match(/<image[^>]+(?:xlink:href|href)=["']([^"']+)["']/i);
+          if (imgMatch?.[1]) {
+            const firstPageDir = fullFirstPath.includes('/')
+              ? fullFirstPath.slice(0, fullFirstPath.lastIndexOf('/') + 1)
+              : '';
+            const resolvedImg = resolveZipRelativePath(firstPageDir, imgMatch[1]);
+            if (zip.file(resolvedImg)) {
+              coverHref = resolvedImg;
+            } else {
+              coverHref = imgMatch[1];
+            }
+          }
+        }
+      }
+    }
+
+    // Method D: manifest item with id/href containing "cover" or "title" and image media-type
     if (!coverHref) {
       const fallbackItem = manifestItems.find((item) => {
         const mediaType = (item.getAttribute('media-type') || '').toLowerCase();
@@ -519,7 +598,7 @@ async function extractEpubMetadata(file: File): Promise<{
         const href = (item.getAttribute('href') || '').toLowerCase();
         return (
           mediaType.startsWith('image/') &&
-          (id.includes('cover') || href.includes('cover'))
+          (id.includes('cover') || href.includes('cover') || href.includes('title'))
         );
       });
       if (fallbackItem) coverHref = fallbackItem.getAttribute('href') || '';
@@ -528,16 +607,50 @@ async function extractEpubMetadata(file: File): Promise<{
     let coverDataUrl: string | undefined;
     if (coverHref) {
       const decodedHref = decodeURIComponent(coverHref);
-      const fullPath = opfDir + decodedHref.replace(/^\.\//, '');
+      const fullPath = resolveZipRelativePath(opfDir, decodedHref);
       const coverZipEntry =
+        zip.file(coverHref) ||
         zip.file(fullPath) ||
         zip.file(decodedHref) ||
-        Object.values(zip.files).find((f) => f.name.toLowerCase().endsWith(decodedHref.toLowerCase()));
+        Object.values(zip.files).find((f) =>
+          f.name.toLowerCase().endsWith(decodedHref.split('/').pop()?.toLowerCase() || '')
+        );
 
       if (coverZipEntry && !coverZipEntry.dir) {
         const imgBlob = await coverZipEntry.async('blob');
         const compressed = await compressImageBlobToDataUrl(imgBlob);
         if (compressed) coverDataUrl = compressed;
+      }
+    }
+
+    // Extract opening readable chapter text from first few spine documents
+    let sampleText = '';
+    for (const ref of spineItemRefs.slice(0, 5)) {
+      if (sampleText.length >= 1600) break;
+      const idref = ref.getAttribute('idref');
+      const item = manifestItems.find((i) => i.getAttribute('id') === idref);
+      const href = item?.getAttribute('href') || '';
+      if (!href) continue;
+      const fullPath = resolveZipRelativePath(opfDir, href);
+      const entry = zip.file(fullPath) || zip.file(href);
+      if (!entry) continue;
+      try {
+        const html = await entry.async('string');
+        const textOnly = stripSiteWatermarks(
+          html
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/gi, ' ')
+            .replace(/&amp;/gi, '&')
+            .replace(/\s+/g, ' ')
+            .trim()
+        );
+        if (textOnly.length > 80) {
+          sampleText += (sampleText ? '\n\n' : '') + textOnly;
+        }
+      } catch {
+        // skip unreadable spine section
       }
     }
 
@@ -548,6 +661,7 @@ async function extractEpubMetadata(file: File): Promise<{
       subject: rawSubject || undefined,
       year,
       coverDataUrl,
+      sampleContent: sampleText ? sampleText.slice(0, 1800) : undefined,
     };
   } catch (err) {
     console.warn('EPUB extraction fallback:', err);
@@ -555,64 +669,159 @@ async function extractEpubMetadata(file: File): Promise<{
   }
 }
 
-function decodePdfTextBytes(raw: string): string {
-  // Handle UTF-16BE BOM (\xFE\xFF) if present
-  if (raw.startsWith('\u00fe\u00ff') || raw.startsWith('\xFE\xFF')) {
-    let out = '';
-    for (let i = 2; i + 1 < raw.length; i += 2) {
-      const code = (raw.charCodeAt(i) << 8) | raw.charCodeAt(i + 1);
-      if (code >= 32) out += String.fromCharCode(code);
-    }
-    return out;
-  }
-  return raw
-    .replace(/\\n/g, ' ')
-    .replace(/\\r/g, ' ')
-    .replace(/\\\(/g, '(')
-    .replace(/\\\)/g, ')')
-    .replace(/\\\\/g, '\\');
-}
-
 /**
- * Reads embedded /Title, /Author, /Subject from PDF Info dictionary without heavy external workers.
+ * Renders Page 1 of a PDF file to a crisp JPEG cover data URL,
+ * and reads page count, PDF Info metadata, and opening text excerpt using PDF.js.
  */
-async function extractPdfHeaderMetadata(file: File): Promise<{
+async function renderPdfPageOneAndExtractMetadata(file: Blob): Promise<{
+  coverDataUrl?: string;
+  pageCount?: number;
   title?: string;
   author?: string;
   subject?: string;
+  sampleContent?: string;
 }> {
+  let pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
+  let loadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null;
   try {
-    const headBlob = file.slice(0, 131072);
-    const tailStart = Math.max(0, file.size - 65536);
-    const tailBlob = file.slice(tailStart, file.size);
+    const buffer = await file.arrayBuffer();
+    loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      disableAutoFetch: true,
+      disableStream: true,
+    });
+    pdfDoc = await loadingTask.promise;
 
-    const [headBuf, tailBuf] = await Promise.all([
-      headBlob.arrayBuffer(),
-      tailBlob.arrayBuffer(),
-    ]);
+    const pageCount = pdfDoc.numPages || undefined;
 
-    const decoder = new TextDecoder('latin1');
-    const combinedText = decoder.decode(headBuf) + '\n' + decoder.decode(tailBuf);
+    // 1. Extract embedded Info metadata
+    let metaTitle = '';
+    let metaAuthor = '';
+    let metaSubject = '';
+    try {
+      const meta = await pdfDoc.getMetadata();
+      const info = (meta?.info || {}) as Record<string, unknown>;
+      metaTitle = stripSiteWatermarks(String(info.Title || ''));
+      metaAuthor = stripSiteWatermarks(String(info.Author || ''));
+      metaSubject = stripSiteWatermarks(String(info.Subject || ''));
+    } catch {
+      // ignore metadata failure
+    }
 
-    const matchField = (field: string) => {
-      const regex = new RegExp(`/${field}\\s*\\(([^)]{1,260})\\)`, 'i');
-      const m = combinedText.match(regex);
-      if (!m) return '';
-      return stripSiteWatermarks(decodePdfTextBytes(m[1]));
-    };
+    // 2. Render Page 1 onto canvas for the original book cover
+    let coverDataUrl: string | undefined;
+    try {
+      const page1 = await pdfDoc.getPage(1);
+      const baseViewport = page1.getViewport({ scale: 1 });
+      const targetWidth = 520;
+      const scale = Math.min(2.2, Math.max(0.5, targetWidth / (baseViewport.width || 520)));
+      const viewport = page1.getViewport({ scale });
 
-    const title = matchField('Title');
-    const author = matchField('Author');
-    const subject = matchField('Subject');
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(viewport.width));
+      canvas.height = Math.max(1, Math.round(viewport.height));
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page1.render({
+          canvasContext: ctx,
+          viewport,
+          canvas,
+        }).promise;
+        coverDataUrl = canvas.toDataURL('image/jpeg', 0.86);
+      }
+      page1.cleanup();
+    } catch (renderErr) {
+      console.warn('PDF Page 1 render fallback:', renderErr);
+    }
+
+    // 3. Extract opening text excerpt from pages 1-4
+    let sampleText = '';
+    try {
+      const maxPagesToRead = Math.min(4, pdfDoc.numPages || 1);
+      for (let p = 1; p <= maxPagesToRead; p++) {
+        if (sampleText.length >= 1600) break;
+        const page = await pdfDoc.getPage(p);
+        const textContent = await page.getTextContent();
+        const pageStr = textContent.items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const cleanedPageStr = stripSiteWatermarks(pageStr);
+        if (cleanedPageStr.length > 60) {
+          sampleText += (sampleText ? '\n\n' : '') + cleanedPageStr;
+        }
+        page.cleanup();
+      }
+    } catch {
+      // ignore text extraction issues on image-scanned PDFs
+    }
 
     return {
-      title: title && !isJunkMetadataValue(title) ? title : undefined,
-      author: author && !isJunkMetadataValue(author) ? author : undefined,
-      subject: subject && !isJunkMetadataValue(subject) ? subject : undefined,
+      coverDataUrl,
+      pageCount,
+      title: metaTitle && !isJunkMetadataValue(metaTitle) ? metaTitle : undefined,
+      author: metaAuthor && !isJunkMetadataValue(metaAuthor) ? metaAuthor : undefined,
+      subject: metaSubject && !isJunkMetadataValue(metaSubject) ? metaSubject : undefined,
+      sampleContent: sampleText ? sampleText.slice(0, 1800) : undefined,
     };
-  } catch {
+  } catch (err) {
+    console.warn('PDF.js extraction failed, falling back:', err);
     return {};
+  } finally {
+    if (pdfDoc) {
+      try {
+        await pdfDoc.cleanup();
+      } catch {
+        // ignore
+      }
+    }
+    if (loadingTask) {
+      try {
+        await loadingTask.destroy();
+      } catch {
+        // ignore
+      }
+    }
   }
+}
+
+/**
+ * Extracts original Page 1 cover directly from a stored File/Blob (for upgrading existing books).
+ */
+export async function extractOriginalCoverFromBlob(
+  blob: Blob,
+  fileType: string
+): Promise<{
+  coverUrl?: string;
+  coverOrigin?: 'page1' | 'embedded';
+  pageCount?: number;
+  sampleContent?: string;
+}> {
+  const lowerType = (fileType || '').toLowerCase();
+  if (lowerType === 'pdf') {
+    const pdfRes = await renderPdfPageOneAndExtractMetadata(blob);
+    if (pdfRes.coverDataUrl) {
+      return {
+        coverUrl: pdfRes.coverDataUrl,
+        coverOrigin: 'page1',
+        pageCount: pdfRes.pageCount,
+        sampleContent: pdfRes.sampleContent,
+      };
+    }
+  } else if (lowerType === 'epub') {
+    const epubRes = await extractEpubMetadata(blob);
+    if (epubRes.coverDataUrl) {
+      return {
+        coverUrl: epubRes.coverDataUrl,
+        coverOrigin: 'embedded',
+        sampleContent: epubRes.sampleContent,
+      };
+    }
+  }
+  return {};
 }
 
 /**
@@ -638,7 +847,6 @@ function verifyImageLoads(url: string, timeoutMs = 4000): Promise<boolean> {
       if (!settled) {
         settled = true;
         clearTimeout(timer);
-        // Reject tiny 1x1 placeholder images
         resolve(img.naturalWidth >= 40 && img.naturalHeight >= 50);
       }
     };
@@ -654,9 +862,9 @@ function verifyImageLoads(url: string, timeoutMs = 4000): Promise<boolean> {
 }
 
 /**
- * Searches Google Books & Open Library for official book cover, author, description, and categories.
+ * Searches Google Books & Open Library for official book metadata, synopsis, and fallback cover.
  */
-async function lookupOfficialBookDetails(
+export async function lookupOfficialBookDetails(
   title: string,
   author: string
 ): Promise<{
@@ -716,7 +924,6 @@ async function lookupOfficialBookDetails(
       }
     }
 
-    // Fallback to Open Library search if Google Books had no match
     const olUrl = `https://openlibrary.org/search.json?title=${encodeURIComponent(title)}${
       author ? `&author=${encodeURIComponent(author)}` : ''
     }&limit=3`;
@@ -742,7 +949,7 @@ async function lookupOfficialBookDetails(
       }
     }
   } catch {
-    // Offline or timeout — gracefully continue to crisp Canvas Cover fallback
+    // Offline or timeout
   } finally {
     clearTimeout(timer);
   }
@@ -751,9 +958,11 @@ async function lookupOfficialBookDetails(
 }
 
 /**
- * Full pipeline: Reads a local ebook File, strips all "OceanofPDF" and mirror tags,
- * extracts EPUB/PDF metadata & embedded cover, fetches official cover if missing,
- * classifies the right genre shelf, and generates a crisp canvas cover fallback if needed.
+ * Full pipeline:
+ * 1. Strips all "OceanofPDF" and mirror-site watermarks from filename & metadata.
+ * 2. Extracts the book's ORIGINAL Page 1 cover (for PDF via PDF.js, for EPUB via OPF/Page 1 XHTML).
+ * 3. Queries Google Books / Open Library for synopsis, author, page count, or fallback cover if missing.
+ * 4. Classifies into the accurate genre shelf.
  */
 export async function analyzeDeviceEbookFile(
   file: File,
@@ -771,7 +980,6 @@ export async function analyzeDeviceEbookFile(
   let pageCount: number | undefined;
   let isbn: string | undefined;
 
-  // 1. Extract internal metadata & embedded cover depending on format
   if (parsed.fileType === 'epub') {
     const epubMeta = await extractEpubMetadata(file);
     if (epubMeta.title && epubMeta.title.length >= 2) title = toSmartTitleCase(epubMeta.title);
@@ -779,13 +987,18 @@ export async function analyzeDeviceEbookFile(
     if (epubMeta.description) description = epubMeta.description;
     if (epubMeta.subject) subject = epubMeta.subject;
     if (epubMeta.year) year = epubMeta.year;
+    if (epubMeta.sampleContent) sampleContent = epubMeta.sampleContent;
     if (epubMeta.coverDataUrl) {
       coverUrl = epubMeta.coverDataUrl;
       coverSource = 'embedded';
     }
   } else if (parsed.fileType === 'pdf') {
-    const pdfMeta = await extractPdfHeaderMetadata(file);
-    // Use PDF /Title only if filename had little info or PDF /Title is clean and non-generic
+    const pdfMeta = await renderPdfPageOneAndExtractMetadata(file);
+    if (pdfMeta.coverDataUrl) {
+      coverUrl = pdfMeta.coverDataUrl;
+      coverSource = 'page1';
+    }
+    if (pdfMeta.pageCount) pageCount = pdfMeta.pageCount;
     if (pdfMeta.title && pdfMeta.title.length >= 3 && title === 'Untitled Edition') {
       title = toSmartTitleCase(pdfMeta.title);
     }
@@ -793,6 +1006,7 @@ export async function analyzeDeviceEbookFile(
       author = toSmartTitleCase(pdfMeta.author);
     }
     if (pdfMeta.subject) subject = pdfMeta.subject;
+    if (pdfMeta.sampleContent) sampleContent = pdfMeta.sampleContent;
   } else if (parsed.fileType === 'txt') {
     try {
       const txt = await file.text();
@@ -805,7 +1019,7 @@ export async function analyzeDeviceEbookFile(
     }
   }
 
-  // 2. Lookup official cover & metadata if cover or author or description is missing
+  // Query official book database for missing synopsis/author/cover fallback (keeps Page 1 cover first!)
   if (!coverUrl || !author || !description) {
     const official = await lookupOfficialBookDetails(title, author);
     if (!coverUrl && official.coverUrl) {
@@ -822,11 +1036,10 @@ export async function analyzeDeviceEbookFile(
       subject = official.categories.join(', ');
     }
     if (!year && official.year) year = official.year;
-    if (official.pageCount) pageCount = official.pageCount;
+    if (!pageCount && official.pageCount) pageCount = official.pageCount;
     if (official.isbn) isbn = official.isbn;
   }
 
-  // Final safety cleanup ensuring zero "OceanofPDF" ever leaks into display strings
   title = stripSiteWatermarks(title) || 'Untitled Edition';
   author = stripSiteWatermarks(author) || defaultAuthorFallback;
   description = stripSiteWatermarks(description);
@@ -835,11 +1048,11 @@ export async function analyzeDeviceEbookFile(
   const themeId = getGenreCoverTheme(genre);
 
   if (!description) {
-    description = `${title} by ${author} — curated in the ${genre} collection on Open Shelf for instant digital reading and download.`;
+    description = `${title} by ${author} — available in the ${genre} collection on Open Shelf for instant digital download and hardcopy delivery.`;
   }
 
   if (!sampleContent) {
-    sampleContent = `${title.toUpperCase()}\nBy ${author}\nShelf: ${genre}\n\n${description}\n\nClick "Download File" above to save the complete ${parsed.fileType.toUpperCase()} edition (${buildCleanFileName(title, parsed.fileType)}) directly to your device.`;
+    sampleContent = `${title.toUpperCase()}\nBy ${author}\nShelf: ${genre}\n\n${description}\n\nDownload or read the complete ${parsed.fileType.toUpperCase()} edition (${buildCleanFileName(title, parsed.fileType)}) after checkout.`;
   }
 
   if (!coverUrl) {

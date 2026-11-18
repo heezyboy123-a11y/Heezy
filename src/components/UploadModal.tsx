@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Book, BookGenre, BookFormat, User } from '../types/book';
 import {
   X,
@@ -9,8 +9,6 @@ import {
   Link as LinkIcon,
   Smartphone,
   FileUp,
-  ShieldCheck,
-  AlertTriangle,
   Crown,
   FolderOpen,
   Layers,
@@ -18,6 +16,8 @@ import {
   Loader2,
   ImagePlus,
   RefreshCw,
+  Search,
+  Shuffle,
 } from 'lucide-react';
 import { generateCanvasBookCover, COVER_THEMES, CoverThemeId } from '../services/coverGenerator';
 import { isStoreOwnerUser } from '../services/storage';
@@ -27,6 +27,7 @@ import {
   stripSiteWatermarks,
   detectFileType,
   formatBytes,
+  suggestVariedBookPrice,
 } from '../services/ebookCleaner';
 import { saveBookFileBlob } from '../services/fileStore';
 
@@ -51,6 +52,7 @@ const ALL_GENRES: BookGenre[] = [
   'Education & Academics',
 ];
 
+const QUICK_PRICE_PRESETS_NGN = [3000, 4500, 6000, 7500, 10500, 15000];
 const EBOOK_EXTENSIONS = ['.pdf', '.epub', '.mobi', '.azw', '.azw3', '.txt', '.md', '.rtf'];
 
 function isLikelyEbookFile(fileName: string): boolean {
@@ -69,14 +71,14 @@ interface BatchDraftItem {
   description: string;
   sampleContent: string;
   coverUrl: string;
-  coverSource: 'embedded' | 'official' | 'canvas' | 'custom';
+  coverSource: 'page1' | 'embedded' | 'official' | 'canvas' | 'custom';
   fileType: 'pdf' | 'epub' | 'mobi' | 'txt';
   fileSize: string;
   pageCount?: number;
   themeId: CoverThemeId;
-  isFree: boolean;
   priceUSD: number;
   priceNGN: number;
+  formatAvailable: BookFormat;
   included: boolean;
 }
 
@@ -96,19 +98,26 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 }) => {
   const isStoreOwner = isStoreOwnerUser(currentUser);
 
-  // Studio mode: 'batch' (Smart Device / Folder Import) vs 'single' (Single Book Studio)
+  // Strict security guard: only the store owner can render/use the Upload Studio
+  if (!isStoreOwner) {
+    return null;
+  }
+
+  // Studio mode: 'batch' (1 to 100+ ebooks / Folder Import) vs 'single' (Single Book Studio)
   const [studioMode, setStudioMode] = useState<'batch' | 'single'>('batch');
 
-  // Shared authorship declaration state
-  const [declaredOriginalWork, setDeclaredOriginalWork] = useState(false);
-  const [declarationError, setDeclarationError] = useState<string | null>(null);
-
   // ---------------------------------------------------------------------------
-  // BATCH DEVICE IMPORTER STATE
+  // BATCH DEVICE IMPORTER STATE (SUPPORTS 100+ BOOKS AT ONCE)
   // ---------------------------------------------------------------------------
   const [batchItems, setBatchItems] = useState<BatchDraftItem[]>([]);
+  const [queueSearch, setQueueSearch] = useState('');
+  const [bulkCustomNGN, setBulkCustomNGN] = useState<number>(4500);
   const [isAnalyzingBatch, setIsAnalyzingBatch] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; currentName: string }>({
+  const [batchProgress, setBatchProgress] = useState<{
+    current: number;
+    total: number;
+    currentName: string;
+  }>({
     current: 0,
     total: 0,
     currentName: '',
@@ -126,15 +135,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   // SINGLE BOOK STUDIO STATE
   // ---------------------------------------------------------------------------
   const [title, setTitle] = useState('');
-  const [author, setAuthor] = useState(() => (isStoreOwner ? '' : currentUser?.name || ''));
+  const [author, setAuthor] = useState('');
   const [genre, setGenre] = useState<BookGenre>('Self-Help & Personal Growth');
   const [year, setYear] = useState<number | ''>(new Date().getFullYear());
   const [description, setDescription] = useState('');
-  const [isFree, setIsFree] = useState(false);
-  const [priceUSD, setPriceUSD] = useState<number>(5.0);
-  const [priceNGN, setPriceNGN] = useState<number>(7500);
+  const [priceUSD, setPriceUSD] = useState<number>(2.0);
+  const [priceNGN, setPriceNGN] = useState<number>(3000);
   const [formatAvailable, setFormatAvailable] = useState<BookFormat>('both');
-  const [stockPhysical, setStockPhysical] = useState<number>(10);
+  const [stockPhysical, setStockPhysical] = useState<number>(15);
   const [sampleContent, setSampleContent] = useState('');
 
   const [uploadMethod, setUploadMethod] = useState<'device' | 'text' | 'link'>('device');
@@ -144,13 +152,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [fileName, setFileName] = useState('');
   const [cleanFileNamePreview, setCleanFileNamePreview] = useState('');
   const [fileSize, setFileSize] = useState('');
-  const [fileType, setFileType] = useState<'pdf' | 'epub' | 'mobi' | 'txt'>('epub');
+  const [fileType, setFileType] = useState<'pdf' | 'epub' | 'mobi' | 'txt'>('pdf');
   const [fileDataUrl, setFileDataUrl] = useState<string>('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [isAnalyzingSingle, setIsAnalyzingSingle] = useState(false);
   const [singlePageCount, setSinglePageCount] = useState<number | undefined>(undefined);
 
-  const [coverSource, setCoverSource] = useState<'generate' | 'upload' | 'extracted'>('generate');
+  const [coverSource, setCoverSource] = useState<'generate' | 'upload' | 'page1' | 'embedded' | 'official'>('generate');
   const [selectedThemeId, setSelectedThemeId] = useState<CoverThemeId>('minimalist-editorial');
   const [coverDataUrl, setCoverDataUrl] = useState<string>('');
 
@@ -158,7 +166,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-generate cover preview in Single mode when title, author, or theme changes
+  // Auto-generate fallback cover preview in Single mode only when designer is active
   useEffect(() => {
     if (coverSource === 'generate') {
       const displayTitle = stripSiteWatermarks(title) || 'Your Book Title';
@@ -175,16 +183,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   }, [title, author, genre, year, selectedThemeId, coverSource]);
 
   // ---------------------------------------------------------------------------
-  // BATCH PROCESSING HANDLERS
+  // BATCH PROCESSING HANDLERS (1 to 100+ BOOKS)
   // ---------------------------------------------------------------------------
   const processBatchFiles = async (rawFiles: File[]) => {
     if (!rawFiles || rawFiles.length === 0) return;
 
-    // Prefer genuine ebook files when scanning folders, but keep explicit single/multi picks if no extension matched
     const ebookFiles = rawFiles.filter((f) => isLikelyEbookFile(f.name) && !f.name.startsWith('.'));
-    const candidates = ebookFiles.length > 0 ? ebookFiles : rawFiles.filter((f) => !f.name.startsWith('.'));
+    const candidates =
+      ebookFiles.length > 0 ? ebookFiles : rawFiles.filter((f) => !f.name.startsWith('.'));
 
-    // Deduplicate against existing queue items
     const existingSignatures = new Set(
       batchItems.map((item) => `${item.rawFileName}::${item.fileSize}`)
     );
@@ -197,27 +204,32 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setIsAnalyzingBatch(true);
     setBatchProgress({ current: 0, total: uniqueFiles.length, currentName: uniqueFiles[0].name });
 
-    const defaultFallbackAuthor = isStoreOwner
-      ? 'Independent Author'
-      : currentUser?.name || 'Independent Author';
-
     const analyzedDrafts: BatchDraftItem[] = [];
-    const CONCURRENCY = 2;
+    const CONCURRENCY = 2; // Keeps memory steady even when uploading 100+ PDFs at once
     let completedCount = 0;
 
     for (let i = 0; i < uniqueFiles.length; i += CONCURRENCY) {
       const slice = uniqueFiles.slice(i, i + CONCURRENCY);
       const chunkResults = await Promise.all(
         slice.map(async (file, offset) => {
-          const analyzed = await analyzeDeviceEbookFile(file, defaultFallbackAuthor);
+          const idx = i + offset;
+          const analyzed = await analyzeDeviceEbookFile(file, 'Independent Author');
           completedCount += 1;
           setBatchProgress({
             current: completedCount,
             total: uniqueFiles.length,
             currentName: analyzed.title,
           });
-          const draftId = `draft-${Date.now()}-${i + offset}-${Math.random().toString(36).slice(2, 7)}`;
+          const draftId = `draft-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
           pendingFilesRef.current.set(draftId, file);
+
+          // Automatically vary prices starting from ₦3,000 ($2.00) upward
+          const variedPrice = suggestVariedBookPrice(
+            analyzed.title,
+            analyzed.genre,
+            analyzed.pageCount,
+            batchItems.length + idx
+          );
 
           return {
             draftId,
@@ -235,9 +247,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             fileSize: analyzed.fileSize,
             pageCount: analyzed.pageCount,
             themeId: analyzed.themeId,
-            isFree: false,
-            priceUSD: 5.0,
-            priceNGN: 7500,
+            priceUSD: variedPrice.priceUSD,
+            priceNGN: variedPrice.priceNGN,
+            formatAvailable: 'both',
             included: true,
           } satisfies BatchDraftItem;
         })
@@ -311,16 +323,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setBatchItems((prev) => prev.filter((item) => item.draftId !== draftId));
   };
 
+  const handleVaryAllPrices = () => {
+    setBatchItems((prev) =>
+      prev.map((item, idx) => {
+        const varied = suggestVariedBookPrice(item.title, item.genre, item.pageCount, idx);
+        return {
+          ...item,
+          priceUSD: varied.priceUSD,
+          priceNGN: varied.priceNGN,
+        };
+      })
+    );
+  };
+
+  const handleApplyBulkCustomPrice = () => {
+    const safeNGN = Math.max(3000, Math.round(bulkCustomNGN || 3000));
+    const safeUSD = Math.max(2, Number((safeNGN / 1500).toFixed(2)));
+    setBatchItems((prev) =>
+      prev.map((item) => ({
+        ...item,
+        priceNGN: safeNGN,
+        priceUSD: safeUSD,
+      }))
+    );
+  };
+
   const handlePublishBatch = async () => {
     const includedDrafts = batchItems.filter((item) => item.included && item.title.trim());
     if (includedDrafts.length === 0) return;
-
-    if (!isStoreOwner && !declaredOriginalWork) {
-      setDeclarationError(
-        'Author Protection Policy: You must certify that these books are your own original work before publishing.'
-      );
-      return;
-    }
 
     setIsPublishingBatch(true);
     const today = new Date().toISOString().split('T')[0];
@@ -333,8 +363,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const cleanAuthor = stripSiteWatermarks(draft.author) || 'Independent Author';
       const cleanDesc =
         stripSiteWatermarks(draft.description) ||
-        `${cleanTitle} by ${cleanAuthor} — curated in the ${draft.genre} collection on Open Shelf.`;
+        `${cleanTitle} by ${cleanAuthor} — available in the ${draft.genre} collection on Open Shelf.`;
       const cleanFileName = buildCleanFileName(cleanTitle, draft.fileType);
+
+      // Enforce minimum ebook pricing floor (₦3,000 / $2.00 upward)
+      const finalNGN = Math.max(3000, Math.round(draft.priceNGN || 3000));
+      const finalUSD = Math.max(2, Number((draft.priceUSD || finalNGN / 1500).toFixed(2)));
 
       const pendingFile = pendingFilesRef.current.get(draft.draftId);
       if (pendingFile) {
@@ -348,16 +382,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         genre: draft.genre,
         year: draft.year,
         description: cleanDesc,
-        priceUSD: draft.isFree ? 0 : draft.priceUSD,
-        priceNGN: draft.isFree ? 0 : draft.priceNGN,
-        formatAvailable: 'ebook',
+        priceUSD: finalUSD,
+        priceNGN: finalNGN,
+        formatAvailable: draft.formatAvailable,
         coverUrl: draft.coverUrl,
+        coverOrigin: draft.coverSource,
         fileSize: draft.fileSize,
         fileType: draft.fileType,
         cleanFileName,
         pageCount: draft.pageCount,
         sampleContent: draft.sampleContent,
-        stockPhysical: 0,
+        stockPhysical: draft.formatAvailable !== 'ebook' ? 20 : 0,
         uploadedAt: today,
         isUserUploaded: true,
       };
@@ -374,6 +409,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     onClose();
   };
 
+  // Filtered batch items for easy navigation when reviewing 100 books
+  const visibleBatchItems = useMemo(() => {
+    if (!queueSearch.trim()) return batchItems;
+    const q = queueSearch.toLowerCase();
+    return batchItems.filter(
+      (it) =>
+        it.title.toLowerCase().includes(q) ||
+        it.author.toLowerCase().includes(q) ||
+        it.genre.toLowerCase().includes(q)
+    );
+  }, [batchItems, queueSearch]);
+
   // ---------------------------------------------------------------------------
   // SINGLE BOOK STUDIO HANDLERS
   // ---------------------------------------------------------------------------
@@ -385,31 +432,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setIsAnalyzingSingle(true);
 
     try {
-      const analyzed = await analyzeDeviceEbookFile(
-        file,
-        isStoreOwner ? 'Independent Author' : currentUser?.name || 'Independent Author'
-      );
+      const analyzed = await analyzeDeviceEbookFile(file, 'Independent Author');
 
       setFileType(analyzed.fileType);
       setFileSize(analyzed.fileSize);
       setCleanFileNamePreview(analyzed.cleanFileName);
       if (analyzed.pageCount) setSinglePageCount(analyzed.pageCount);
 
-      // Cleanly populate fields without OceanofPDF watermarks
       setTitle(analyzed.title);
-      if (analyzed.author && (isStoreOwner || !author.trim())) {
-        setAuthor(analyzed.author);
-      }
+      if (analyzed.author) setAuthor(analyzed.author);
       setGenre(analyzed.genre);
       if (analyzed.year) setYear(analyzed.year);
       if (!description.trim()) setDescription(analyzed.description);
       if (!sampleContent.trim()) setSampleContent(analyzed.sampleContent);
 
-      // Apply extracted embedded or official cover unless user already uploaded a custom photo
+      // Apply varied starting price >= ₦3,000 ($2)
+      const varied = suggestVariedBookPrice(analyzed.title, analyzed.genre, analyzed.pageCount, 1);
+      setPriceNGN(varied.priceNGN);
+      setPriceUSD(varied.priceUSD);
+
+      // Apply Page 1 / embedded / official cover unless user already uploaded a custom photo
       if (coverSource !== 'upload') {
-        if (analyzed.coverSource === 'embedded' || analyzed.coverSource === 'official') {
+        if (
+          analyzed.coverSource === 'page1' ||
+          analyzed.coverSource === 'embedded' ||
+          analyzed.coverSource === 'official'
+        ) {
           setCoverDataUrl(analyzed.coverUrl);
-          setCoverSource('extracted');
+          setCoverSource(analyzed.coverSource);
         } else {
           setSelectedThemeId(analyzed.themeId);
           setCoverSource('generate');
@@ -444,13 +494,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   };
 
   const handleUSDChange = (val: number) => {
-    setPriceUSD(val);
-    setPriceNGN(Math.round(val * 1500));
+    const safeUSD = Math.max(2, val);
+    setPriceUSD(safeUSD);
+    setPriceNGN(Math.max(3000, Math.round(safeUSD * 1500)));
   };
 
   const handleNGNChange = (val: number) => {
-    setPriceNGN(val);
-    setPriceUSD(Number((val / 1500).toFixed(2)));
+    const safeNGN = Math.max(3000, val);
+    setPriceNGN(safeNGN);
+    setPriceUSD(Math.max(2, Number((safeNGN / 1500).toFixed(2))));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -458,13 +510,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     const cleanTitle = stripSiteWatermarks(title);
     const cleanAuthor = stripSiteWatermarks(author);
     if (!cleanTitle || !cleanAuthor) return;
-
-    if (!isStoreOwner && !declaredOriginalWork) {
-      setDeclarationError(
-        'Author Protection Policy: You must certify that this is your own original work before publishing.'
-      );
-      return;
-    }
 
     const bookId = `book-user-${Date.now()}`;
     let finalDownloadUrl = fileDataUrl || undefined;
@@ -492,7 +537,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     const cleanDownloadName = buildCleanFileName(cleanTitle, finalFileType);
     const cleanDesc =
       stripSiteWatermarks(description) ||
-      `${cleanTitle} is an independent publication by ${cleanAuthor}, available for immediate digital reading and distribution.`;
+      `${cleanTitle} by ${cleanAuthor} — available on Open Shelf for instant digital download and hardcopy courier delivery.`;
+
+    const finalNGN = Math.max(3000, Math.round(priceNGN || 3000));
+    const finalUSD = Math.max(2, Number((priceUSD || finalNGN / 1500).toFixed(2)));
+
+    const coverOrigin: Book['coverOrigin'] =
+      coverSource === 'upload'
+        ? 'custom'
+        : coverSource === 'generate'
+        ? 'canvas'
+        : coverSource;
 
     const newBook: Book = {
       id: bookId,
@@ -501,10 +556,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       genre,
       year: year ? Number(year) : undefined,
       description: cleanDesc,
-      priceUSD: isFree ? 0 : priceUSD,
-      priceNGN: isFree ? 0 : priceNGN,
+      priceUSD: finalUSD,
+      priceNGN: finalNGN,
       formatAvailable,
       coverUrl: coverDataUrl,
+      coverOrigin,
       fileSize: finalFileSize,
       fileType: finalFileType,
       cleanFileName: cleanDownloadName,
@@ -512,7 +568,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       downloadUrl: finalDownloadUrl,
       sampleContent:
         finalSample ||
-        `PREVIEW EXCERPT — ${cleanTitle.toUpperCase()}\n\nBy ${cleanAuthor}\n\nThis volume is distributed directly to readers through Open Shelf. All digital reading rights and instant downloads are unlocked upon checkout.`,
+        `PREVIEW EXCERPT — ${cleanTitle.toUpperCase()}\n\nBy ${cleanAuthor}\n\nThis volume is distributed through Open Shelf. Complete digital downloads and hardcopy shipping are unlocked upon checkout.`,
       stockPhysical: formatAvailable !== 'ebook' ? stockPhysical : 0,
       uploadedAt: new Date().toISOString().split('T')[0],
       isUserUploaded: true,
@@ -526,7 +582,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-950/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl border border-stone-200 overflow-hidden my-4 max-h-[92vh] flex flex-col">
+      <div className="relative w-full max-w-5xl bg-white rounded-xl shadow-2xl border border-stone-200 overflow-hidden my-4 max-h-[92vh] flex flex-col">
         {/* Modal Header */}
         <div className="px-6 py-4 bg-stone-50 border-b border-stone-200 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
@@ -535,10 +591,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
             <div>
               <h2 className="font-serif text-lg font-bold text-stone-900 leading-tight">
-                Smart Device Library &amp; Author Studio
+                Store Owner Catalog &amp; Batch Ebook Importer
               </h2>
               <p className="text-xs text-stone-500">
-                Auto-strips OceanofPDF/site tags · Extracts real covers · Places books on accurate shelves
+                Extracts Page 1 original cover · Strips OceanofPDF tags · Custom NGN/USD pricing from ₦3,000 ($2) upward
               </p>
             </div>
           </div>
@@ -551,42 +607,25 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           </button>
         </div>
 
-        {/* Ownership Status Banner */}
-        {isStoreOwner ? (
-          <div className="px-6 py-2.5 bg-amber-500/10 border-b border-amber-200/80 flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-amber-900 font-medium">
-              <Crown className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>
-                <strong>Store Owner Master Rights:</strong> You have full distributor authority to batch-import any ebooks from your device and place them across all shelves.
-              </span>
-            </div>
-            <span className="font-mono text-[11px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full shrink-0 hidden sm:inline">
-              Admin Distributor
+        {/* Store Owner Exclusive Status Banner */}
+        <div className="px-6 py-2.5 bg-amber-500/10 border-b border-amber-200/80 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-amber-900 font-medium">
+            <Crown className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Store Owner Exclusive Upload:</strong> Only your owner account sees and accesses this studio. Batch-upload up to 100+ ebooks at once, set individual NGN/USD prices (₦3,000+), and auto-extract original Page 1 covers.
             </span>
           </div>
-        ) : (
-          <div className="px-6 py-2.5 bg-stone-100 border-b border-stone-200 flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-stone-800 font-medium">
-              <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
-              <span>
-                <strong>Author Protection Policy:</strong> You may only publish books that are your own original work. Curating third-party books is reserved for the store administrator.
-              </span>
-            </div>
-            <span className="font-mono text-[11px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full shrink-0 hidden sm:inline">
-              Original Works Only
-            </span>
-          </div>
-        )}
+          <span className="font-mono text-[11px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full shrink-0 hidden sm:inline">
+            Store Owner Only
+          </span>
+        </div>
 
         {/* Top Studio Mode Switcher */}
         <div className="px-6 py-3 bg-white border-b border-stone-200 flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex p-1 bg-stone-100 rounded-lg border border-stone-200/70 text-xs">
             <button
               type="button"
-              onClick={() => {
-                setStudioMode('batch');
-                setDeclarationError(null);
-              }}
+              onClick={() => setStudioMode('batch')}
               className={`px-3.5 py-1.5 rounded-md font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                 studioMode === 'batch'
                   ? 'bg-stone-900 text-white shadow-xs'
@@ -594,14 +633,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Smart Batch Import (Phone / Folder)</span>
+              <span>Batch Upload (1–100+ Ebooks / Folder)</span>
             </button>
             <button
               type="button"
-              onClick={() => {
-                setStudioMode('single');
-                setDeclarationError(null);
-              }}
+              onClick={() => setStudioMode('single')}
               className={`px-3.5 py-1.5 rounded-md font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                 studioMode === 'single'
                   ? 'bg-stone-900 text-white shadow-xs'
@@ -615,17 +651,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
           <span className="text-[11px] text-stone-500 font-mono">
             {studioMode === 'batch'
-              ? 'Select multiple PDF/EPUB files or a full folder'
-              : 'Craft metadata, pricing & custom cover'}
+              ? 'Page 1 original covers + per-book pricing before upload'
+              : 'Detailed single book setup'}
           </span>
         </div>
 
         {/* ===================================================================== */}
-        {/* MODE 1: SMART BATCH DEVICE & FOLDER IMPORTER                          */}
+        {/* MODE 1: BATCH UPLOAD (SUPPORTS 1 TO 100+ BOOKS WITH PER-BOOK PRICING)  */}
         {/* ===================================================================== */}
         {studioMode === 'batch' ? (
           <div className="overflow-y-auto p-6 space-y-5 flex-1">
-            {/* Hidden file / folder inputs + per-row cover uploader */}
             <input
               ref={batchFileInputRef}
               type="file"
@@ -650,12 +685,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               className="hidden"
             />
 
-            {/* Privacy + Automation Explanation */}
+            {/* Explanation Notice */}
             <div className="p-3.5 rounded-lg bg-[#F7F4EC] border border-[#E8E3D9] text-xs text-stone-700 leading-relaxed flex items-start gap-2.5">
               <Sparkles className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
               <div>
-                <strong className="text-stone-900">1-Tap Auto-Import &amp; Filename Cleaner:</strong>{' '}
-                Browsers protect your privacy until you tap a folder or file picker below. Once selected, Open Shelf automatically strips <span className="font-mono text-stone-900">OceanofPDF.com</span> and download tags from every title and file, retrieves or extracts each book&apos;s real cover, and shelves every book under its right category.
+                <strong className="text-stone-900">Original Page 1 Covers + Flexible Batch Pricing:</strong>{' '}
+                Select up to 100+ ebooks or a full folder below. Open Shelf automatically captures the <strong>original Page 1 cover</strong> from each PDF/EPUB, strips <span className="font-mono text-stone-900">OceanofPDF</span> watermarks, assigns each book to its accurate shelf, and lets you adjust every book&apos;s NGN/USD price (starting from ₦3,000 / $2 upward) before publishing. Hardcopy orders automatically include the city courier delivery fee.
               </div>
             </div>
 
@@ -683,10 +718,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   <Loader2 className="w-8 h-8 mx-auto text-stone-900 animate-spin" />
                   <div>
                     <p className="font-serif text-lg font-bold text-stone-900">
-                      Cleaning filenames &amp; matching covers ({batchProgress.current} of {batchProgress.total})
+                      Extracting Page 1 covers &amp; cleaning ({batchProgress.current} of {batchProgress.total})
                     </p>
                     <p className="text-xs text-stone-500 mt-0.5 truncate max-w-md mx-auto">
-                      Inspecting: {batchProgress.currentName}
+                      Reading: {batchProgress.currentName}
                     </p>
                   </div>
                 </div>
@@ -694,10 +729,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <div className="space-y-4">
                   <div className="space-y-1">
                     <h3 className="font-serif text-lg font-bold text-stone-900">
-                      Select Ebooks or an Entire Folder from Your Device
+                      Select 1 to 100+ Ebooks or an Entire Folder from Your Device
                     </h3>
                     <p className="text-xs text-stone-600 max-w-lg mx-auto">
-                      Pick all your EPUB or PDF files at once from Phone Storage, Downloads, iCloud, or Google Drive. Full book files stay stored ready for instant reading &amp; clean downloads.
+                      Works with PDF, EPUB, MOBI, and TXT files stored on your phone, Downloads, iCloud, or computer.
                     </p>
                   </div>
 
@@ -727,57 +762,96 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             {/* Batch Queue Review Table / Cards */}
             {batchItems.length > 0 && (
               <div className="space-y-3">
-                {/* Bulk Toolbar */}
-                <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-stone-100 rounded-lg border border-stone-200 text-xs">
-                  <div className="font-semibold text-stone-900">
-                    {includedBatchCount} of {batchItems.length} books ready to publish
+                {/* Bulk Toolbar for 1 to 100+ Books */}
+                <div className="p-3.5 bg-stone-100 rounded-lg border border-stone-200 space-y-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold text-stone-900">
+                      {includedBatchCount} of {batchItems.length} books selected for publishing
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleVaryAllPrices}
+                        className="px-2.5 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded font-medium flex items-center gap-1 cursor-pointer"
+                        title="Automatically vary prices across all books from ₦3,000 ($2) upward"
+                      >
+                        <Shuffle className="w-3 h-3 text-amber-200" />
+                        <span>Vary Prices (₦3k – ₦12.5k)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBatchItems((prev) =>
+                            prev.map((it) => ({ ...it, priceNGN: 3000, priceUSD: 2.0 }))
+                          )
+                        }
+                        className="px-2.5 py-1.5 bg-white hover:bg-stone-50 text-stone-800 border border-stone-300 rounded font-medium cursor-pointer"
+                      >
+                        Set All ₦3,000 ($2)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => batchFileInputRef.current?.click()}
+                        className="px-2.5 py-1.5 bg-white hover:bg-stone-50 text-stone-800 border border-stone-300 rounded font-medium cursor-pointer"
+                      >
+                        + Add More
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          pendingFilesRef.current.clear();
+                          setBatchItems([]);
+                        }}
+                        className="px-2.5 py-1.5 text-rose-700 hover:bg-rose-50 rounded font-medium cursor-pointer"
+                      >
+                        Clear Queue
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setBatchItems((prev) => prev.map((it) => ({ ...it, isFree: true })))
-                      }
-                      className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-medium cursor-pointer"
-                    >
-                      Set All Free ($0)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setBatchItems((prev) =>
-                          prev.map((it) => ({ ...it, isFree: false, priceUSD: 5, priceNGN: 7500 }))
-                        )
-                      }
-                      className="px-2.5 py-1 bg-white hover:bg-stone-50 text-stone-800 border border-stone-300 rounded font-medium cursor-pointer"
-                    >
-                      Set All $5 / ₦7,500
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => batchFileInputRef.current?.click()}
-                      className="px-2.5 py-1 bg-white hover:bg-stone-50 text-stone-800 border border-stone-300 rounded font-medium cursor-pointer"
-                    >
-                      + Add More
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        pendingFilesRef.current.clear();
-                        setBatchItems([]);
-                      }}
-                      className="px-2.5 py-1 text-rose-700 hover:bg-rose-50 rounded font-medium cursor-pointer"
-                    >
-                      Clear Queue
-                    </button>
+                  {/* Quick Filter + Custom Bulk Price Bar (ideal for 100+ books) */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-stone-200/80">
+                    <div className="relative flex-1 min-w-[200px]">
+                      <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={queueSearch}
+                        onChange={(e) => setQueueSearch(e.target.value)}
+                        placeholder={`Filter ${batchItems.length} queued books by title or genre...`}
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-stone-600 font-medium">Custom all (₦):</span>
+                      <input
+                        type="number"
+                        min="3000"
+                        step="500"
+                        value={bulkCustomNGN}
+                        onChange={(e) => setBulkCustomNGN(Number(e.target.value))}
+                        className="w-24 px-2 py-1 text-xs font-mono bg-white border border-stone-300 rounded"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleApplyBulkCustomPrice}
+                        className="px-2.5 py-1 bg-white hover:bg-stone-50 text-stone-900 border border-stone-300 rounded font-semibold cursor-pointer"
+                      >
+                        Apply All
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 {/* Editable Queue Items */}
                 <div className="space-y-3">
-                  {batchItems.map((item) => {
-                    const siteTagStripped = item.rawFileName.toLowerCase() !== item.cleanFileName.toLowerCase();
+                  {visibleBatchItems.map((item) => {
+                    const siteTagStripped =
+                      item.rawFileName.toLowerCase() !== item.cleanFileName.toLowerCase();
                     return (
                       <div
                         key={item.draftId}
@@ -787,7 +861,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                             : 'bg-stone-50/70 border-stone-200/60 opacity-60'
                         }`}
                       >
-                        {/* Checkbox & Cover Thumbnail */}
+                        {/* Checkbox & Original Cover Thumbnail */}
                         <div className="flex items-start gap-3 shrink-0">
                           <input
                             type="checkbox"
@@ -809,13 +883,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                               />
                               <div className="absolute inset-y-0 left-0 w-2 bg-gradient-to-r from-black/25 via-white/10 to-transparent pointer-events-none" />
                             </div>
-                            <span className="block text-[10px] font-mono text-center text-stone-500">
-                              {item.coverSource === 'embedded'
-                                ? 'Embedded'
+                            <span className="block text-[10px] font-mono text-center text-stone-600 font-medium">
+                              {item.coverSource === 'page1'
+                                ? 'Page 1 Cover'
+                                : item.coverSource === 'embedded'
+                                ? 'Original Cover'
                                 : item.coverSource === 'official'
-                                ? 'Official'
+                                ? 'Official Cover'
                                 : item.coverSource === 'custom'
-                                ? 'Custom'
+                                ? 'Custom Photo'
                                 : 'Studio Cover'}
                             </span>
                             <div className="flex items-center justify-center gap-1">
@@ -842,7 +918,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                           </div>
                         </div>
 
-                        {/* Metadata Editor Fields */}
+                        {/* Metadata & Per-Book Price Controls */}
                         <div className="flex-1 min-w-0 space-y-3">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
@@ -875,7 +951,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
                           <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
                             {/* Auto Genre Shelf */}
-                            <div className="sm:col-span-5">
+                            <div className="sm:col-span-4">
                               <label className="text-[11px] font-semibold text-stone-600 block mb-0.5">
                                 Auto-Detected Shelf Genre
                               </label>
@@ -894,58 +970,79 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                               </select>
                             </div>
 
-                            {/* Pricing */}
-                            <div className="sm:col-span-6 flex items-center gap-2">
-                              <label className="flex items-center gap-1.5 text-xs font-medium text-stone-700 cursor-pointer shrink-0 pt-3">
-                                <input
-                                  type="checkbox"
-                                  checked={item.isFree}
-                                  onChange={(e) =>
-                                    updateBatchDraft(item.draftId, { isFree: e.target.checked })
-                                  }
-                                  className="w-3.5 h-3.5 rounded text-stone-900"
-                                />
-                                <span>Free</span>
+                            {/* Edition Options (Ebook + Hardcopy with delivery fee) */}
+                            <div className="sm:col-span-3">
+                              <label className="text-[11px] font-semibold text-stone-600 block mb-0.5">
+                                Formats Offered
                               </label>
+                              <select
+                                value={item.formatAvailable}
+                                onChange={(e) =>
+                                  updateBatchDraft(item.draftId, {
+                                    formatAvailable: e.target.value as BookFormat,
+                                  })
+                                }
+                                className="w-full px-2 py-1.5 text-xs bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
+                              >
+                                <option value="both">Ebook + Hardcopy</option>
+                                <option value="ebook">Ebook Only</option>
+                              </select>
+                            </div>
 
-                              {!item.isFree && (
-                                <div className="grid grid-cols-2 gap-2 flex-1">
-                                  <div>
-                                    <label className="text-[10px] text-stone-500 block">USD ($)</label>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      step="0.5"
-                                      value={item.priceUSD}
-                                      onChange={(e) => {
-                                        const usd = Number(e.target.value) || 0;
-                                        updateBatchDraft(item.draftId, {
-                                          priceUSD: usd,
-                                          priceNGN: Math.round(usd * 1500),
-                                        });
-                                      }}
-                                      className="w-full px-2 py-1 text-xs font-mono border border-stone-300 rounded"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-[10px] text-stone-500 block">NGN (₦)</label>
-                                    <input
-                                      type="number"
-                                      min="500"
-                                      step="500"
-                                      value={item.priceNGN}
-                                      onChange={(e) => {
-                                        const ngn = Number(e.target.value) || 0;
-                                        updateBatchDraft(item.draftId, {
-                                          priceNGN: ngn,
-                                          priceUSD: Number((ngn / 1500).toFixed(2)),
-                                        });
-                                      }}
-                                      className="w-full px-2 py-1 text-xs font-mono border border-stone-300 rounded"
-                                    />
-                                  </div>
-                                </div>
-                              )}
+                            {/* Individual Price Controls (NGN ₦3,000+ & USD $2+) */}
+                            <div className="sm:col-span-4 grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] font-semibold text-stone-600 block mb-0.5">
+                                  Ebook NGN (₦3k+)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="3000"
+                                  step="500"
+                                  value={item.priceNGN}
+                                  onChange={(e) => {
+                                    const ngn = Number(e.target.value) || 0;
+                                    updateBatchDraft(item.draftId, {
+                                      priceNGN: ngn,
+                                      priceUSD: Number((ngn / 1500).toFixed(2)),
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    const safeNGN = Math.max(3000, Number(e.target.value) || 3000);
+                                    updateBatchDraft(item.draftId, {
+                                      priceNGN: safeNGN,
+                                      priceUSD: Math.max(2, Number((safeNGN / 1500).toFixed(2))),
+                                    });
+                                  }}
+                                  className="w-full px-2 py-1.5 text-xs font-mono font-semibold border border-stone-300 rounded bg-white"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold text-stone-600 block mb-0.5">
+                                  Ebook USD ($2+)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="2"
+                                  step="0.5"
+                                  value={item.priceUSD}
+                                  onChange={(e) => {
+                                    const usd = Number(e.target.value) || 0;
+                                    updateBatchDraft(item.draftId, {
+                                      priceUSD: usd,
+                                      priceNGN: Math.round(usd * 1500),
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    const safeUSD = Math.max(2, Number(e.target.value) || 2);
+                                    updateBatchDraft(item.draftId, {
+                                      priceUSD: safeUSD,
+                                      priceNGN: Math.max(3000, Math.round(safeUSD * 1500)),
+                                    });
+                                  }}
+                                  className="w-full px-2 py-1.5 text-xs font-mono font-semibold border border-stone-300 rounded bg-white"
+                                />
+                              </div>
                             </div>
 
                             <div className="sm:col-span-1 flex justify-end">
@@ -958,6 +1055,32 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             </div>
+                          </div>
+
+                          {/* One-Click Per-Book Quick Price Chips */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] text-stone-500 font-medium mr-1">
+                              Quick price:
+                            </span>
+                            {QUICK_PRICE_PRESETS_NGN.map((presetNgn) => (
+                              <button
+                                key={presetNgn}
+                                type="button"
+                                onClick={() =>
+                                  updateBatchDraft(item.draftId, {
+                                    priceNGN: presetNgn,
+                                    priceUSD: Number((presetNgn / 1500).toFixed(2)),
+                                  })
+                                }
+                                className={`px-2 py-0.5 text-[11px] font-mono rounded border transition-colors cursor-pointer ${
+                                  item.priceNGN === presetNgn
+                                    ? 'bg-stone-900 text-white border-stone-900 font-semibold'
+                                    : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                                }`}
+                              >
+                                ₦{presetNgn.toLocaleString()} (${(presetNgn / 1500).toFixed(0)})
+                              </button>
+                            ))}
                           </div>
 
                           {/* Cleaned Filename Verification Line */}
@@ -976,6 +1099,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                               )}
                               <span>
                                 {item.fileType.toUpperCase()} · {item.fileSize}
+                                {item.pageCount ? ` · ${item.pageCount}p` : ''}
                               </span>
                             </div>
                           </div>
@@ -987,40 +1111,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             )}
 
-            {/* Authorship Certification for Non-Owners */}
-            {!isStoreOwner && batchItems.length > 0 && (
-              <div className="p-4 bg-amber-50/80 rounded-lg border border-amber-200/90 space-y-2">
-                <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={declaredOriginalWork}
-                    onChange={(e) => {
-                      setDeclaredOriginalWork(e.target.checked);
-                      if (e.target.checked) setDeclarationError(null);
-                    }}
-                    className="w-4 h-4 mt-0.5 rounded text-stone-900 border-stone-300 focus:ring-stone-800 cursor-pointer"
-                  />
-                  <span className="text-xs text-stone-800 leading-relaxed">
-                    <strong className="font-bold text-stone-900 block mb-0.5">
-                      Original Authorship &amp; Copyright Certification (Mandatory):
-                    </strong>
-                    I declare and certify that I am the sole author and legitimate copyright owner of all selected books in this queue.
-                  </span>
-                </label>
-                {declarationError && (
-                  <div className="flex items-center gap-1.5 text-xs text-rose-700 font-semibold">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{declarationError}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Batch Footer Actions */}
             <div className="pt-4 border-t border-stone-200 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-1.5 text-xs text-stone-500">
                 <Check className="w-4 h-4 text-emerald-600" />
-                <span>Full PDF/EPUB binaries stored offline in your browser library</span>
+                <span>Full PDF/EPUB files &amp; Page 1 covers saved ready for instant delivery</span>
               </div>
 
               <div className="flex items-center gap-3">
@@ -1060,17 +1155,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           /* MODE 2: SINGLE BOOK STUDIO                                          */
           /* =================================================================== */
           <form onSubmit={handleSubmit} className="overflow-y-auto p-6 space-y-6 flex-1">
-            {/* Section 1: Multiple Upload Methods for Phone & Computer */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
                   <FileUp className="w-4 h-4 text-stone-800" />
-                  <span>Upload or Add Your Ebook Content</span>
+                  <span>Select Ebook File from Device</span>
                 </span>
-                <span className="text-[11px] text-stone-500 font-mono">Auto-cleans OceanofPDF tags</span>
+                <span className="text-[11px] text-stone-500 font-mono">
+                  Captures Page 1 cover &amp; cleans OceanofPDF tags
+                </span>
               </div>
 
-              {/* Method Tabs */}
               <div className="grid grid-cols-3 gap-1 bg-stone-100 p-1 rounded-lg text-xs">
                 <button
                   type="button"
@@ -1082,7 +1177,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   }`}
                 >
                   <Smartphone className="w-3.5 h-3.5" />
-                  <span className="truncate">File on Phone</span>
+                  <span className="truncate">File on Device</span>
                 </button>
                 <button
                   type="button"
@@ -1110,7 +1205,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 </button>
               </div>
 
-              {/* TAB 1: DEVICE FILE PICKER */}
               {uploadMethod === 'device' && (
                 <div
                   onDragOver={(e) => {
@@ -1159,7 +1253,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                               </span>
                               <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full shrink-0">
                                 <Check className="w-3 h-3" />{' '}
-                                {isAnalyzingSingle ? 'Analyzing...' : 'Cleaned & Ready'}
+                                {isAnalyzingSingle ? 'Extracting Page 1...' : 'Cleaned & Ready'}
                               </span>
                             </div>
                             <span className="text-xs text-stone-500 font-mono mt-0.5 block">
@@ -1192,61 +1286,28 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                           Tap anywhere here to select an ebook file
                         </p>
                         <p className="text-xs text-stone-600 max-w-md mx-auto">
-                          Automatically removes OceanofPDF tags, detects genre, and fills in cover &amp; details.
+                          Automatically extracts the original Page 1 cover, removes OceanofPDF tags, and detects shelf category.
                         </p>
-                        <div className="pt-1.5 flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-stone-500 font-mono">
-                          <span className="bg-stone-200/80 px-2 py-0.5 rounded">EPUB</span>
-                          <span className="bg-stone-200/80 px-2 py-0.5 rounded">PDF</span>
-                          <span className="bg-stone-200/80 px-2 py-0.5 rounded">MOBI</span>
-                          <span className="bg-stone-200/80 px-2 py-0.5 rounded">TXT</span>
-                          <span className="bg-stone-200/80 px-2 py-0.5 rounded">Any file (*.*)</span>
-                        </div>
                       </div>
-                      <div className="pt-1">
-                        <span className="inline-flex items-center gap-1.5 px-4 py-2 bg-stone-900 text-white text-xs font-semibold rounded-md shadow-xs">
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>Tap to Browse Phone Files</span>
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {!fileName && (
-                    <div className="mt-4 pt-3 border-t border-stone-200/70 flex flex-col sm:flex-row items-center justify-center gap-2 relative z-30">
-                      <span className="text-[11px] text-stone-500 font-medium">
-                        Direct phone browser button:
-                      </span>
-                      <input
-                        type="file"
-                        onChange={handleFileChange}
-                        className="text-xs text-stone-700 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-semibold file:bg-stone-200 file:text-stone-800 hover:file:bg-stone-300 cursor-pointer"
-                      />
                     </div>
                   )}
                 </div>
               )}
 
-              {/* TAB 2: PASTE BOOK MANUSCRIPT / CHAPTER TEXT */}
               {uploadMethod === 'text' && (
                 <div className="bg-stone-50 border border-stone-300 rounded-lg p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-stone-700" />
-                      <span className="text-xs font-semibold text-stone-900">
-                        Paste Book Chapters / Text Directly
-                      </span>
-                    </div>
+                    <span className="text-xs font-semibold text-stone-900">
+                      Paste Book Chapters / Text Directly
+                    </span>
                     {pasteContent.trim() && (
                       <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                        {pasteContent.trim().split(/\s+/).length} words · ~{Math.max(1, Math.round(pasteContent.length / 1024))} KB
+                        {pasteContent.trim().split(/\s+/).length} words
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-stone-600">
-                    Ideal if your manuscript is in your phone&apos;s Notes app, Google Docs, or email. Open Shelf will turn it into a downloadable digital book.
-                  </p>
                   <textarea
-                    rows={6}
+                    rows={5}
                     value={pasteContent}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1257,24 +1318,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         if (firstLine.length > 3) setTitle(firstLine);
                       }
                     }}
-                    placeholder="Paste your prologue, chapters, poetry, or full manuscript here..."
+                    placeholder="Paste book text here..."
                     className="w-full px-3.5 py-2.5 text-xs bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 font-serif leading-relaxed"
                   />
                 </div>
               )}
 
-              {/* TAB 3: CLOUD STORAGE OR PUBLIC LINK */}
               {uploadMethod === 'link' && (
                 <div className="bg-stone-50 border border-stone-300 rounded-lg p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <LinkIcon className="w-4 h-4 text-stone-700" />
-                    <span className="text-xs font-semibold text-stone-900">
-                      Google Drive, Dropbox, or Direct Ebook Link
-                    </span>
-                  </div>
-                  <p className="text-xs text-stone-600">
-                    Have your file hosted on Google Drive, Dropbox, iCloud, or your website? Paste the shareable link below so buyers and readers can download it.
-                  </p>
+                  <span className="text-xs font-semibold text-stone-900 block">
+                    Google Drive, Dropbox, or Direct Ebook Link
+                  </span>
                   <input
                     type="url"
                     value={externalLink}
@@ -1290,7 +1344,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               )}
             </div>
 
-            {/* Section 2: Book Details & Pricing */}
+            {/* Book Details */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div>
                 <label className="text-xs font-semibold text-stone-700 block mb-1">
@@ -1301,39 +1355,23 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Echoes Across the River"
+                  placeholder="e.g. Atomic Habits"
                   className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
                 />
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-stone-700">
-                    {isStoreOwner ? 'Author Name *' : 'Author Name (Your Original Creator Name) *'}
-                  </label>
-                  {!isStoreOwner && (
-                    <span className="text-[11px] text-amber-800 font-medium">
-                      Original work only
-                    </span>
-                  )}
-                </div>
+                <label className="text-xs font-semibold text-stone-700 block mb-1">
+                  Author Name *
+                </label>
                 <input
                   type="text"
                   required
                   value={author}
                   onChange={(e) => setAuthor(e.target.value)}
-                  placeholder={
-                    isStoreOwner
-                      ? 'e.g. Walter Isaacson, Chinua Achebe, or your name'
-                      : 'Your true author or pen name'
-                  }
+                  placeholder="e.g. James Clear"
                   className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
                 />
-                <p className="text-[11px] text-stone-500 mt-1">
-                  {isStoreOwner
-                    ? 'Master distributor privileges: you may enter any author name.'
-                    : 'Must match your true original creator identity. Distributing third-party books is prohibited.'}
-                </p>
               </div>
 
               <div>
@@ -1372,72 +1410,80 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   max="2030"
                   value={year}
                   onChange={(e) => setYear(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="Leave blank or enter year (e.g. 2026)"
+                  placeholder="2026"
                   className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 font-mono"
                 />
               </div>
             </div>
 
-            {/* Pricing Setup */}
+            {/* Pricing Setup (Minimum $2 / ₦3,000 upward + Hardcopy Courier Option) */}
             <div className="p-4 bg-stone-50 rounded-lg border border-stone-200 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-stone-900 block">Pricing &amp; Distribution</span>
-                  <span className="text-xs text-stone-500">
-                    Offer as a free digital gift or sell worldwide via Paystack
-                  </span>
-                </div>
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-stone-700">
-                  <input
-                    type="checkbox"
-                    checked={isFree}
-                    onChange={(e) => setIsFree(e.target.checked)}
-                    className="w-4 h-4 rounded text-stone-900 focus:ring-stone-800"
-                  />
-                  <span>Distribute for Free ($0)</span>
-                </label>
+              <div>
+                <span className="text-xs font-bold text-stone-900 block">
+                  Pricing &amp; Distribution (Minimum ₦3,000 / $2.00)
+                </span>
+                <span className="text-xs text-stone-500">
+                  Set ebook price starting from ₦3,000 ($2) upward. Hardcopy buyers automatically pay the city courier delivery fee at checkout.
+                </span>
               </div>
 
-              {!isFree && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-stone-200">
-                  <div>
-                    <label className="text-xs font-medium text-stone-600 block mb-1">
-                      Price in USD ($) — for International Cards
-                    </label>
-                    <div className="relative">
-                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-xs text-stone-400 font-mono">
-                        $
-                      </span>
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="1"
-                        value={priceUSD}
-                        onChange={(e) => handleUSDChange(Number(e.target.value))}
-                        className="w-full pl-7 pr-3 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 font-mono font-semibold"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-stone-600 block mb-1">
-                      Price in NGN (₦) — Paystack Domestic
-                    </label>
-                    <div className="relative">
-                      <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-xs text-stone-400 font-mono">
-                        ₦
-                      </span>
-                      <input
-                        type="number"
-                        step="500"
-                        min="500"
-                        value={priceNGN}
-                        onChange={(e) => handleNGNChange(Number(e.target.value))}
-                        className="w-full pl-7 pr-3 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 font-mono font-semibold"
-                      />
-                    </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-stone-200">
+                <div>
+                  <label className="text-xs font-medium text-stone-600 block mb-1">
+                    Ebook Price in USD ($2.00+)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-xs text-stone-400 font-mono">
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="2"
+                      value={priceUSD}
+                      onChange={(e) => setPriceUSD(Number(e.target.value))}
+                      onBlur={(e) => handleUSDChange(Number(e.target.value))}
+                      className="w-full pl-7 pr-3 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 font-mono font-semibold"
+                    />
                   </div>
                 </div>
-              )}
+                <div>
+                  <label className="text-xs font-medium text-stone-600 block mb-1">
+                    Ebook Price in NGN (₦3,000+)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-xs text-stone-400 font-mono">
+                      ₦
+                    </span>
+                    <input
+                      type="number"
+                      step="500"
+                      min="3000"
+                      value={priceNGN}
+                      onChange={(e) => setPriceNGN(Number(e.target.value))}
+                      onBlur={(e) => handleNGNChange(Number(e.target.value))}
+                      className="w-full pl-7 pr-3 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 font-mono font-semibold"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {QUICK_PRICE_PRESETS_NGN.map((presetNgn) => (
+                  <button
+                    key={presetNgn}
+                    type="button"
+                    onClick={() => handleNGNChange(presetNgn)}
+                    className={`px-2.5 py-1 text-xs font-mono rounded border cursor-pointer ${
+                      priceNGN === presetNgn
+                        ? 'bg-stone-900 text-white border-stone-900 font-semibold'
+                        : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    ₦{presetNgn.toLocaleString()} (${(presetNgn / 1500).toFixed(0)})
+                  </button>
+                ))}
+              </div>
 
               <div className="pt-2 border-t border-stone-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -1449,16 +1495,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     onChange={(e) => setFormatAvailable(e.target.value as BookFormat)}
                     className="w-full px-3 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
                   >
-                    <option value="both">Both Digital Ebook &amp; Physical Print</option>
+                    <option value="both">Both Digital Ebook &amp; Hardcopy (+ Delivery Fee)</option>
                     <option value="ebook">Digital Ebook Only (Instant Download)</option>
-                    <option value="print">Physical Print Only (City Delivery)</option>
+                    <option value="print">Hardcopy Only (City Delivery Fee Applies)</option>
                   </select>
                 </div>
 
                 {formatAvailable !== 'ebook' && (
                   <div>
                     <label className="text-xs font-medium text-stone-600 block mb-1">
-                      Physical Print Stock Count (Units)
+                      Physical Hardcopy Stock Count
                     </label>
                     <input
                       type="number"
@@ -1472,16 +1518,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
             </div>
 
-            {/* Section 3: Neat & Clear Cover Image Generator */}
+            {/* Cover Preview & Optional Override */}
             <div className="p-4 bg-stone-50 rounded-lg border border-stone-200 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-stone-800" />
-                    <span>Neat &amp; Clear Cover Studio</span>
+                    <span>Original Page 1 Cover Preview</span>
                   </span>
                   <span className="text-xs text-stone-500">
-                    Uses extracted/official cover automatically, or customize with Smart Designer / Photo
+                    Automatically captured from the first page of your ebook, or upload/customize if needed
                   </span>
                 </div>
                 <div className="flex items-center gap-1 bg-stone-200/70 p-1 rounded-md text-xs">
@@ -1492,7 +1538,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       coverSource === 'generate' ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-600'
                     }`}
                   >
-                    Smart Designer
+                    Studio Designer
                   </button>
                   <button
                     type="button"
@@ -1531,16 +1577,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     )}
                     <div className="absolute inset-y-0 left-0 w-2.5 bg-gradient-to-r from-black/25 via-white/10 to-transparent pointer-events-none" />
                   </div>
-                  {coverSource === 'extracted' && (
+                  {(coverSource === 'page1' || coverSource === 'embedded' || coverSource === 'official') && (
                     <span className="text-[11px] font-mono text-emerald-700 font-medium">
-                      Matched Official / Embedded Cover
+                      {coverSource === 'page1'
+                        ? 'Extracted from PDF Page 1'
+                        : coverSource === 'embedded'
+                        ? 'Extracted Original EPUB Cover'
+                        : 'Matched Official Cover'}
                     </span>
                   )}
                 </div>
 
                 <div className="sm:col-span-8 space-y-3">
                   <span className="text-xs font-semibold text-stone-700 block">
-                    Select Cover Style &amp; Texture:
+                    Fallback Studio Cover Style (if needed):
                   </span>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {COVER_THEMES.map((th) => (
@@ -1565,90 +1615,29 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       </button>
                     ))}
                   </div>
-
-                  <div className="pt-2 flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const themes = COVER_THEMES.map((t) => t.id);
-                        const next = themes[(themes.indexOf(selectedThemeId) + 1) % themes.length];
-                        setSelectedThemeId(next);
-                        setCoverSource('generate');
-                      }}
-                      className="text-xs font-medium text-stone-700 hover:text-stone-900 underline flex items-center gap-1"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Shuffle Style Preset</span>
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Section 4: Synopsis & Sample Chapter */}
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-semibold text-stone-700 block mb-1">
-                  Book Synopsis / Overview
-                </label>
-                <textarea
-                  rows={3}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Give readers a short, captivating summary of what this book explores..."
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 leading-relaxed"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-stone-700 block mb-1">
-                  Sample Excerpt / First Chapter (Optional)
-                </label>
-                <textarea
-                  rows={3}
-                  value={sampleContent}
-                  onChange={(e) => setSampleContent(e.target.value)}
-                  placeholder="Paste the opening paragraph or chapter so visitors can sample your book in the reader..."
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 font-serif leading-relaxed"
-                />
-              </div>
+            {/* Synopsis */}
+            <div>
+              <label className="text-xs font-semibold text-stone-700 block mb-1">
+                Book Synopsis / Overview
+              </label>
+              <textarea
+                rows={3}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Book summary for shoppers..."
+                className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800 leading-relaxed"
+              />
             </div>
-
-            {/* Mandatory Authorship Declaration for Non-Owners */}
-            {!isStoreOwner && (
-              <div className="p-4 bg-amber-50/80 rounded-lg border border-amber-200/90 space-y-2.5">
-                <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    required
-                    checked={declaredOriginalWork}
-                    onChange={(e) => {
-                      setDeclaredOriginalWork(e.target.checked);
-                      if (e.target.checked) setDeclarationError(null);
-                    }}
-                    className="w-4 h-4 mt-0.5 rounded text-stone-900 border-stone-300 focus:ring-stone-800 cursor-pointer"
-                  />
-                  <span className="text-xs text-stone-800 leading-relaxed">
-                    <strong className="font-bold text-stone-900 block mb-0.5">
-                      Original Authorship &amp; Copyright Certification (Mandatory):
-                    </strong>
-                    I declare, warrant, and legally certify that I am the sole author and legitimate copyright owner of this book manuscript. This volume is my own original creation and has not been copied, plagiarized, or authored by any other third party.
-                  </span>
-                </label>
-                {declarationError && (
-                  <div className="flex items-center gap-1.5 text-xs text-rose-700 font-semibold pt-0.5">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{declarationError}</span>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Submission bar */}
             <div className="pt-4 border-t border-stone-200 flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-xs text-stone-500">
                 <Check className="w-4 h-4 text-emerald-600" />
-                <span>Full book binary persists offline without subscription fees</span>
+                <span>Full ebook binary &amp; Page 1 cover persisted cleanly</span>
               </div>
 
               <div className="flex items-center gap-3">
