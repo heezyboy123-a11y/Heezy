@@ -11,7 +11,13 @@ const PAYSTACK_CONFIG_KEY = 'openshelf_paystack_config_v1';
 const USER_STORAGE_KEY = 'openshelf_user_v1';
 
 export interface PaystackConfig {
+  activeGateway?: 'bank_transfer' | 'flutterwave' | 'payment_link' | 'paystack';
   publicKey: string;
+  flutterwavePublicKey?: string;
+  enableFlutterwave?: boolean;
+  paymentLinkUrl?: string;
+  paymentLinkLabel?: string;
+  enablePaymentLink?: boolean;
   isLive: boolean;
   businessName: string;
   allowInternationalCards: boolean;
@@ -25,7 +31,13 @@ export interface PaystackConfig {
 }
 
 const DEFAULT_PAYSTACK_CONFIG: PaystackConfig = {
+  activeGateway: 'bank_transfer',
   publicKey: 'pk_test_d34298a098c47b5204781498b5840212a4c14c59',
+  flutterwavePublicKey: '',
+  enableFlutterwave: false,
+  paymentLinkUrl: '',
+  paymentLinkLabel: 'Selar / Instant Checkout',
+  enablePaymentLink: false,
   isLive: false,
   businessName: 'Open Shelf Books',
   allowInternationalCards: true,
@@ -35,7 +47,7 @@ const DEFAULT_PAYSTACK_CONFIG: PaystackConfig = {
   accountNumber: '',
   accountName: '',
   ownerWhatsapp: '',
-  enableBankTransfer: false,
+  enableBankTransfer: true,
 };
 
 function fillMissingCovers(bookList: Book[]): Book[] {

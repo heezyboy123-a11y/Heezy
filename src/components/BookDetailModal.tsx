@@ -338,7 +338,7 @@ export const BookDetailModal: React.FC<BookDetailModalProps> = ({
                   <>
                     <Globe className="w-4 h-4 text-stone-700 shrink-0 mt-0.5" />
                     <div>
-                      <strong className="text-stone-900 font-medium">Instant Worldwide Download:</strong> Ebooks are immediately available for reading and download upon checkout. All international Visa &amp; Mastercard cards cleared via Paystack.
+                      <strong className="text-stone-900 font-medium">Instant Worldwide Download:</strong> Ebooks are immediately available for reading and download upon payment confirmation, complete with an official receipt.
                     </div>
                   </>
                 )}

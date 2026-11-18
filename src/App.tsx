@@ -467,7 +467,7 @@ export default function App() {
                   Global Instant Downloads
                 </h3>
                 <p className="text-xs text-stone-600 leading-relaxed">
-                  International readers can instantly purchase and download DRM-free EPUB and PDF editions. Paystack clears international cards in seconds with 3D Secure protection.
+                  Readers everywhere can instantly purchase and download DRM-free EPUB and PDF editions using Direct Bank Transfer, Cards, or Instant Payment Links.
                 </p>
               </div>
 
@@ -528,7 +528,7 @@ export default function App() {
                     onClick={() => setIsSettingsOpen(true)}
                     className="hover:text-stone-900 transition-colors"
                   >
-                    Paystack Settings
+                    Payment &amp; Payout Settings
                   </button>
                 </>
               )}
@@ -554,8 +554,8 @@ export default function App() {
           </div>
 
           <div className="pt-4 border-t border-[#E8E3D9] flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-stone-400">
-            <span>Powered by Paystack · International &amp; Domestic Card Clearance · Support: <a href="mailto:itljies@gmail.com" className="text-stone-600 underline">itljies@gmail.com</a></span>
-            <span>Live Direct-to-Reader Publishing Sanctuary</span>
+            <span>Flexible Checkout · Bank Transfer, Cards &amp; Payment Links · Support: <a href="mailto:itljies@gmail.com" className="text-stone-600 underline">itljies@gmail.com</a></span>
+            <span>Curated Digital &amp; Print Sanctuary</span>
           </div>
         </div>
       </footer>

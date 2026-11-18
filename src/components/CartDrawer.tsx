@@ -17,8 +17,11 @@ import {
   RefreshCw,
   MessageCircle,
   Receipt,
+  Link2,
+  ExternalLink,
 } from 'lucide-react';
 import { initiatePaystackPayment } from '../services/paystack';
+import { initiateFlutterwavePayment } from '../services/flutterwave';
 import {
   saveOrder,
   getPaystackConfig,
@@ -65,16 +68,52 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   // Payout / Payment config & method selection
   const [payoutConfig, setPayoutConfig] = useState<PaystackConfig>(() => getPaystackConfig());
   const hasBankAccount = Boolean(
-    payoutConfig.enableBankTransfer === true &&
+    payoutConfig.enableBankTransfer !== false &&
       payoutConfig.bankName?.trim() &&
       payoutConfig.accountNumber?.trim() &&
       payoutConfig.accountName?.trim()
   );
+  const hasFlutterwave = Boolean(
+    payoutConfig.enableFlutterwave &&
+      payoutConfig.flutterwavePublicKey &&
+      payoutConfig.flutterwavePublicKey.trim().startsWith('FLWPUBK')
+  );
+  const hasPaymentLink = Boolean(
+    payoutConfig.enablePaymentLink && payoutConfig.paymentLinkUrl?.trim()
+  );
   const isPaystackLive = Boolean(
     payoutConfig.isLive && payoutConfig.publicKey && payoutConfig.publicKey.startsWith('pk_live_')
   );
-  const [paymentMethod, setPaymentMethod] = useState<'paystack' | 'bank_transfer'>('paystack');
+
+  const pickDefaultMethod = (cfg: PaystackConfig): 'paystack' | 'flutterwave' | 'bank_transfer' | 'payment_link' => {
+    const bankOk = Boolean(
+      cfg.enableBankTransfer !== false &&
+        cfg.bankName?.trim() &&
+        cfg.accountNumber?.trim() &&
+        cfg.accountName?.trim()
+    );
+    const flwOk = Boolean(
+      cfg.enableFlutterwave && cfg.flutterwavePublicKey?.trim().startsWith('FLWPUBK')
+    );
+    const linkOk = Boolean(cfg.enablePaymentLink && cfg.paymentLinkUrl?.trim());
+    const psOk = Boolean(cfg.isLive && cfg.publicKey?.startsWith('pk_live_'));
+
+    if (cfg.activeGateway === 'flutterwave' && flwOk) return 'flutterwave';
+    if (cfg.activeGateway === 'payment_link' && linkOk) return 'payment_link';
+    if (cfg.activeGateway === 'bank_transfer' && bankOk) return 'bank_transfer';
+    if (cfg.activeGateway === 'paystack' && psOk) return 'paystack';
+
+    if (flwOk) return 'flutterwave';
+    if (linkOk) return 'payment_link';
+    if (bankOk) return 'bank_transfer';
+    return 'paystack';
+  };
+
+  const [paymentMethod, setPaymentMethod] = useState<
+    'paystack' | 'flutterwave' | 'bank_transfer' | 'payment_link'
+  >(() => pickDefaultMethod(payoutConfig));
   const [bankSenderRef, setBankSenderRef] = useState('');
+  const [externalPayRef, setExternalPayRef] = useState('');
   const [copiedAccount, setCopiedAccount] = useState(false);
 
   // Payment processing & completed order states
@@ -91,6 +130,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   useEffect(() => {
     fetchServerPaystackConfig().then((cfg) => {
       setPayoutConfig(cfg);
+      setPaymentMethod(pickDefaultMethod(cfg));
     });
   }, []);
 
@@ -218,6 +258,95 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       return;
     }
 
+    // External Payment Link (e.g. Selar / OPay / External Store Checkout)
+    if (paymentMethod === 'payment_link' && hasPaymentLink) {
+      if (!externalPayRef.trim()) {
+        setErrorMessage(
+          'After completing payment on the checkout link, please enter your payment receipt / reference code.'
+        );
+        return;
+      }
+
+      const linkOrder: Order = {
+        id: orderId,
+        date: new Date().toISOString(),
+        items: [...items],
+        customerEmail,
+        customerName,
+        customerPhone,
+        destinationType,
+        deliveryCity: destinationType === 'domestic' ? selectedCity?.name : undefined,
+        deliveryAddress: destinationType === 'domestic' ? deliveryAddress : undefined,
+        deliveryInstructions: deliveryNotes,
+        totalUSD,
+        totalNGN,
+        currency,
+        paymentMethod: 'payment_link',
+        bankTransferRef: externalPayRef.trim(),
+        paymentStatus: 'pending',
+        deliveryStatus: hasPhysicalItems ? 'preparing' : undefined,
+        downloadAccessGranted: false,
+      };
+
+      saveOrder(linkOrder);
+      setCompletedOrder(linkOrder);
+      onClearCart();
+      return;
+    }
+
+    // Paid Order via Flutterwave Inline Checkout
+    if (paymentMethod === 'flutterwave' && hasFlutterwave && payoutConfig.flutterwavePublicKey) {
+      setIsProcessing(true);
+      const chargeAmount = currency === 'NGN' ? totalNGN : totalUSD;
+      const chargeCurrency = currency === 'NGN' ? 'NGN' : 'USD';
+
+      initiateFlutterwavePayment({
+        publicKey: payoutConfig.flutterwavePublicKey,
+        email: customerEmail,
+        amount: chargeAmount,
+        currency: chargeCurrency,
+        orderId,
+        customerName,
+        customerPhone,
+        businessName: payoutConfig.businessName,
+        onSuccess: (ref) => {
+          setIsProcessing(false);
+          const newOrder: Order = {
+            id: orderId,
+            date: new Date().toISOString(),
+            items: [...items],
+            customerEmail,
+            customerName,
+            customerPhone,
+            destinationType,
+            deliveryCity: destinationType === 'domestic' ? selectedCity?.name : undefined,
+            deliveryAddress: destinationType === 'domestic' ? deliveryAddress : undefined,
+            deliveryInstructions: deliveryNotes,
+            totalUSD,
+            totalNGN,
+            currency,
+            paystackReference: ref,
+            paymentMethod: 'flutterwave',
+            paymentStatus: 'paid',
+            deliveryStatus: hasPhysicalItems ? 'preparing' : undefined,
+            downloadAccessGranted: true,
+          };
+
+          saveOrder(newOrder);
+          setCompletedOrder(newOrder);
+          onClearCart();
+        },
+        onCancel: () => {
+          setIsProcessing(false);
+        },
+        onError: (err) => {
+          setIsProcessing(false);
+          setErrorMessage(err || 'Flutterwave checkout was interrupted. Please try again.');
+        },
+      });
+      return;
+    }
+
     // Paid Order: Initiate Paystack
     setIsProcessing(true);
 
@@ -284,9 +413,25 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     setIsCheckingStatus(false);
   };
 
+  const getPaymentMethodLabel = (method: Order['paymentMethod']) => {
+    switch (method) {
+      case 'bank_transfer':
+        return 'Direct Bank Transfer';
+      case 'payment_link':
+        return 'Instant Payment Link';
+      case 'flutterwave':
+        return 'Flutterwave Card / Transfer';
+      case 'paystack':
+        return 'Paystack Card Checkout';
+      default:
+        return 'Free Edition Grant';
+    }
+  };
+
   const handleDownloadOfficialReceipt = (order: Order) => {
     const storeTitle = payoutConfig.businessName || 'Open Shelf Books';
     const ref = order.paystackReference || order.bankTransferRef || 'FREE_GRANT';
+    const methodLabel = getPaymentMethodLabel(order.paymentMethod);
     const itemsHtml = order.items
       .map(
         (it) =>
@@ -310,12 +455,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #1c1917;padding-bottom:16px;margin-bottom:20px;">
       <div>
         <h1 style="margin:0;font-size:20px;">${storeTitle}</h1>
-        <p style="margin:4px 0 0;font-size:12px;color:#57534e;">Official Payment Receipt · Secured by Paystack</p>
+        <p style="margin:4px 0 0;font-size:12px;color:#57534e;">Official Payment Receipt · ${methodLabel}</p>
       </div>
       <span style="background:#dcfce7;color:#166534;font-weight:700;font-size:12px;padding:4px 10px;border-radius:999px;">PAID</span>
     </div>
     <p style="font-size:13px;margin:4px 0;"><strong>Receipt / Order ID:</strong> ${order.id}</p>
-    <p style="font-size:13px;margin:4px 0;"><strong>Paystack Transaction Ref:</strong> ${ref}</p>
+    <p style="font-size:13px;margin:4px 0;"><strong>Payment Method:</strong> ${methodLabel}</p>
+    <p style="font-size:13px;margin:4px 0;"><strong>Transaction Ref:</strong> ${ref}</p>
     <p style="font-size:13px;margin:4px 0;"><strong>Date:</strong> ${new Date(order.date).toLocaleString()}</p>
     <p style="font-size:13px;margin:4px 0 18px;"><strong>Billed To:</strong> ${order.customerName} (${order.customerEmail})</p>
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
@@ -387,12 +533,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     Thank You, {completedOrder.customerName}!
                   </h3>
                   <p className="text-xs text-stone-600 font-mono">
-                    Order #{completedOrder.id} · Paystack Ref:{' '}
+                    Order #{completedOrder.id} · Ref:{' '}
                     {completedOrder.paystackReference || completedOrder.bankTransferRef || 'FREE_GRANT'}
                   </p>
                 </div>
 
-                {/* Official Paystack & Store Payment Receipt Card */}
+                {/* Official Store Payment Receipt Card */}
                 <div className="p-4 bg-white border border-stone-200 rounded-xl shadow-xs space-y-3 text-xs">
                   <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
                     <div className="flex items-center gap-2 font-bold text-stone-900">
@@ -409,6 +555,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       <span>Merchant:</span>
                       <span className="font-semibold text-stone-900">
                         {payoutConfig.businessName || 'Open Shelf Books'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Method:</span>
+                      <span className="font-semibold text-stone-900">
+                        {getPaymentMethodLabel(completedOrder.paymentMethod)}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -432,8 +584,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
 
                   <p className="text-[11px] text-stone-500 bg-stone-50 p-2 rounded border border-stone-100 leading-relaxed">
-                    When completed through Paystack, Paystack immediately emails an official transaction receipt to{' '}
-                    <strong className="text-stone-700">{completedOrder.customerEmail}</strong>. You can also save a copy below:
+                    Your official receipt for <strong className="text-stone-700">{completedOrder.customerEmail}</strong> is ready. Save or print a copy for your records below:
                   </p>
 
                   <button
@@ -863,38 +1014,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <div className="p-4 bg-stone-50 rounded-lg border border-stone-200 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-stone-900 block">
-                      Secured Checkout · Paystack
+                      Select Payment Method
                     </span>
-                    <span
-                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
-                        isPaystackLive
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {isPaystackLive ? 'Live Verified' : 'Test Mode'}
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800">
+                      Instant Receipt Included
                     </span>
                   </div>
 
-                  <div className={`grid gap-2 ${hasBankAccount ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('paystack')}
-                      className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
-                        paymentMethod === 'paystack'
-                          ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
-                          : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <CreditCard className="w-3.5 h-3.5 text-stone-800" />
-                        <span>Paystack Checkout</span>
-                      </div>
-                      <span className="text-[11px] text-stone-500 block leading-tight">
-                        Card, Bank Transfer, USSD · Instant Paystack email receipt.
-                      </span>
-                    </button>
-
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {hasBankAccount && (
                       <button
                         type="button"
@@ -907,16 +1034,76 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       >
                         <div className="flex items-center gap-1.5 mb-1">
                           <Landmark className="w-3.5 h-3.5 text-emerald-700" />
-                          <span>Direct Bank Transfer</span>
+                          <span>Bank Transfer</span>
                         </div>
                         <span className="text-[11px] text-stone-500 block leading-tight">
-                          Transfer directly to Store Bank Account.
+                          Transfer directly via your bank app.
+                        </span>
+                      </button>
+                    )}
+
+                    {hasPaymentLink && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('payment_link')}
+                        className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
+                          paymentMethod === 'payment_link'
+                            ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
+                            : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <Link2 className="w-3.5 h-3.5 text-amber-700" />
+                          <span>{payoutConfig.paymentLinkLabel || 'Selar / Instant Pay'}</span>
+                        </div>
+                        <span className="text-[11px] text-stone-500 block leading-tight">
+                          Card, Transfer &amp; Mobile Money.
+                        </span>
+                      </button>
+                    )}
+
+                    {hasFlutterwave && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('flutterwave')}
+                        className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
+                          paymentMethod === 'flutterwave'
+                            ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
+                            : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <CreditCard className="w-3.5 h-3.5 text-orange-600" />
+                          <span>Flutterwave Card &amp; USSD</span>
+                        </div>
+                        <span className="text-[11px] text-stone-500 block leading-tight">
+                          Visa, Mastercard, Verve &amp; Transfer.
+                        </span>
+                      </button>
+                    )}
+
+                    {(isPaystackLive || (!hasBankAccount && !hasFlutterwave && !hasPaymentLink)) && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('paystack')}
+                        className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
+                          paymentMethod === 'paystack'
+                            ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
+                            : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <CreditCard className="w-3.5 h-3.5 text-stone-800" />
+                          <span>Card &amp; Online Checkout</span>
+                        </div>
+                        <span className="text-[11px] text-stone-500 block leading-tight">
+                          Visa, Mastercard, Verve &amp; instant receipt.
                         </span>
                       </button>
                     )}
                   </div>
 
-                  {/* Direct Bank Account Transfer Box (only if enabled by Store Owner) */}
+                  {/* Direct Bank Account Transfer Box */}
                   {paymentMethod === 'bank_transfer' && hasBankAccount && (
                     <div className="p-3 bg-white rounded-md border border-emerald-200 space-y-2.5 text-xs">
                       <div className="flex items-center justify-between">
@@ -977,6 +1164,37 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       </div>
                     </div>
                   )}
+
+                  {/* Selar / External Payment Link Box */}
+                  {paymentMethod === 'payment_link' && hasPaymentLink && payoutConfig.paymentLinkUrl && (
+                    <div className="p-3 bg-white rounded-md border border-amber-200 space-y-2.5 text-xs">
+                      <p className="text-stone-700 leading-relaxed">
+                        1. Click below to pay <strong>{formatAmount(totalUSD, totalNGN)}</strong> on{' '}
+                        <strong>{payoutConfig.paymentLinkLabel || 'our secure checkout'}</strong>.
+                      </p>
+                      <a
+                        href={payoutConfig.paymentLinkUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-2 px-3 bg-amber-900 hover:bg-amber-800 text-white font-semibold rounded-md flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Open {payoutConfig.paymentLinkLabel || 'Checkout Page'}</span>
+                      </a>
+                      <div className="pt-1">
+                        <label className="text-[11px] font-semibold text-stone-700 block mb-1">
+                          2. Paste Payment Reference / Receipt ID *
+                        </label>
+                        <input
+                          type="text"
+                          value={externalPayRef}
+                          onChange={(e) => setExternalPayRef(e.target.value)}
+                          placeholder="e.g. Selar/Receipt ref or Sender Name"
+                          className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1024,7 +1242,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               }`}
             >
               {isProcessing ? (
-                <span>Connecting to Paystack...</span>
+                <span>Opening Secure Checkout...</span>
               ) : isFreeTotal ? (
                 <>
                   <Download className="w-4 h-4" />
@@ -1035,14 +1253,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <Landmark className="w-4 h-4" />
                   <span>I Have Transferred ₦{totalNGN.toLocaleString()} · Submit Order</span>
                 </>
+              ) : paymentMethod === 'payment_link' && hasPaymentLink ? (
+                <>
+                  <Link2 className="w-4 h-4" />
+                  <span>Confirm Payment Reference · Submit Order</span>
+                </>
+              ) : paymentMethod === 'flutterwave' && hasFlutterwave ? (
+                <>
+                  <CreditCard className="w-4 h-4" />
+                  <span>Pay {formatAmount(totalUSD, totalNGN)} with Flutterwave</span>
+                </>
               ) : (
                 <>
                   <CreditCard className="w-4 h-4" />
-                  <span>
-                    {isPaystackLive
-                      ? 'Pay with Paystack · International & Local Cards'
-                      : 'Pay with Paystack (Test Mode)'}
-                  </span>
+                  <span>Pay {formatAmount(totalUSD, totalNGN)} · Instant Card &amp; Bank Checkout</span>
                 </>
               )}
             </button>
@@ -1053,8 +1277,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
                 <span>
                   {paymentMethod === 'bank_transfer' && hasBankAccount
-                    ? 'Direct bank transfer to Store Owner bank account'
-                    : 'Secured by Paystack · Accepts Visa, Mastercard, Verve & Amex'}
+                    ? 'Verified bank transfer with downloadable payment receipt'
+                    : '256-bit Encrypted Checkout · Instant Receipt & Book Access'}
                 </span>
               </div>
             </div>

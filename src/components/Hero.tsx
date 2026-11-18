@@ -86,7 +86,7 @@ export const Hero: React.FC<HeroProps> = ({
           {/* Left Column: Editorial Headline & Search */}
           <div className="lg:col-span-7 space-y-6">
             <div className="flex items-center gap-2 text-xs font-medium text-stone-500 uppercase tracking-widest">
-              <span>Direct-to-Reader Publishing</span>
+              <span>Curated Digital &amp; Print Bookstore</span>
               <span aria-hidden="true">·</span>
               <span>Open Shelf Press</span>
             </div>
@@ -96,8 +96,8 @@ export const Hero: React.FC<HeroProps> = ({
             </h1>
 
             <p className="text-base sm:text-lg text-stone-600 leading-relaxed max-w-2xl">
-              Publish directly from your phone. Set your own prices, accept international cards worldwide with{' '}
-              <strong className="text-stone-900 font-semibold">Paystack</strong>, and send printed volumes straight to readers via trusted city couriers.
+              Explore original digital ebooks and printed hardcopy volumes ready for instant reading or doorstep courier delivery. Pay effortlessly via{' '}
+              <strong className="text-stone-900 font-semibold">Bank Transfer, Card, or Instant Payment Link</strong>.
             </p>
 
             {/* Search Input Bar with Live Suggestions Dropdown */}
@@ -197,7 +197,7 @@ export const Hero: React.FC<HeroProps> = ({
               </div>
               <div className="flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-stone-700" />
-                <span>Paystack Card Clearance (Visa · Mastercard)</span>
+                <span>Easy Checkout · Bank Transfer, Card &amp; Pay Link</span>
               </div>
             </div>
           </div>

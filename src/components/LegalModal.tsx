@@ -70,7 +70,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ onClose, initialTab = 't
             <div className="space-y-6">
               <div className="border-b border-stone-200 pb-4">
                 <p className="text-stone-800 font-serif text-base font-semibold">
-                  Open Shelf Publishing &amp; Bookstore Terms of Service
+                  Open Shelf Bookstore Terms of Service
                 </p>
                 <p className="text-[11px] text-stone-400 font-mono mt-0.5">
                   Effective Date: November 2026 · Official Custodian: itljies@gmail.com
@@ -78,23 +78,17 @@ export const LegalModal: React.FC<LegalModalProps> = ({ onClose, initialTab = 't
               </div>
 
               <section className="space-y-2">
-                <h4 className="font-bold text-stone-900 text-sm">1. Nature of the Service</h4>
+                <h4 className="font-bold text-stone-900 text-sm">1. Nature of the Storefront</h4>
                 <p>
-                  Open Shelf operates an open digital and print publishing press. We enable independent writers, researchers, and creators to upload and distribute original works, and provide readers worldwide with access to free and paid literary titles.
+                  Open Shelf operates a curated digital and print bookstore managed by the store owner. We provide readers worldwide with access to verified digital ebooks and printed hardcopy editions.
                 </p>
               </section>
 
               <section className="space-y-2">
-                <h4 className="font-bold text-stone-900 text-sm">2. Author &amp; Creator Distribution Rights</h4>
+                <h4 className="font-bold text-stone-900 text-sm">2. Catalog Curation &amp; Authenticity</h4>
                 <p>
-                  When you upload an ebook or physical volume to Open Shelf:
+                  All catalog additions, pricing, cover selection, and book distribution on Open Shelf are managed exclusively by the store administration to preserve edition accuracy and reader quality.
                 </p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>You retain 100% of your intellectual property, copyright, and publishing rights.</li>
-                  <li>You grant Open Shelf a non-exclusive license to host, display, and deliver your files to buyers upon payment clearance.</li>
-                  <li>You warrant that all uploaded content is your own work or that you hold legitimate distribution licenses, and that it does not infringe copyright or third-party rights.</li>
-                  <li>You can set or modify prices (including free distribution) at your discretion.</li>
-                </ul>
               </section>
 
               <section className="space-y-2">
@@ -105,9 +99,9 @@ export const LegalModal: React.FC<LegalModalProps> = ({ onClose, initialTab = 't
               </section>
 
               <section className="space-y-2">
-                <h4 className="font-bold text-stone-900 text-sm">4. International Card Payments via Paystack</h4>
+                <h4 className="font-bold text-stone-900 text-sm">4. Flexible Checkout &amp; Payment Methods</h4>
                 <p>
-                  All payments are processed securely via <strong>Paystack</strong>. Paystack accepts international cards (Visa, Mastercard, Verve, American Express). Prices can be paid in USD ($) or NGN (₦). Open Shelf does not store or process payment card numbers or CVVs on our own servers.
+                  Open Shelf supports Direct Bank Transfer, Instant Payment Links, and Card/Transfer gateways (such as Flutterwave or Paystack when enabled by the store). Prices are displayed in USD ($) or NGN (₦). Open Shelf never stores or processes payment card numbers or banking PINs on our servers.
                 </p>
               </section>
 
@@ -121,14 +115,14 @@ export const LegalModal: React.FC<LegalModalProps> = ({ onClose, initialTab = 't
               <section className="space-y-2">
                 <h4 className="font-bold text-stone-900 text-sm">6. International Client Policy</h4>
                 <p>
-                  For international clients residing outside our physical partner delivery zones, orders are limited strictly to digital ebook downloads. Instant download links are activated immediately upon Paystack payment verification.
+                  For international clients residing outside our physical partner delivery zones, orders are limited strictly to digital ebook downloads. Instant download links are unlocked immediately once payment is verified.
                 </p>
               </section>
 
               <section className="space-y-2">
                 <h4 className="font-bold text-stone-900 text-sm">7. Inquiries &amp; Legal Notices</h4>
                 <p>
-                  For any questions regarding licensing, creator payouts, copyright claims, or terms, contact us directly at <a href="mailto:itljies@gmail.com" className="text-stone-900 font-semibold underline">itljies@gmail.com</a>.
+                  For any questions regarding orders, licensing, copyright claims, or terms, contact us directly at <a href="mailto:itljies@gmail.com" className="text-stone-900 font-semibold underline">itljies@gmail.com</a>.
                 </p>
               </section>
             </div>
@@ -150,16 +144,16 @@ export const LegalModal: React.FC<LegalModalProps> = ({ onClose, initialTab = 't
                   We believe in minimal data footprint. We only collect information strictly required to deliver your books:
                 </p>
                 <ul className="list-disc pl-5 space-y-1">
-                  <li><strong>Account &amp; Email:</strong> To deliver receipt confirmations, download tokens, and reading library access.</li>
+                  <li><strong>Account &amp; Email:</strong> To deliver receipt confirmations, download access, and reading library sync.</li>
                   <li><strong>Delivery Information:</strong> Physical street address and recipient phone number, collected solely for city courier riders to deliver print books.</li>
-                  <li><strong>Creator Uploads:</strong> Ebook files, titles, and cover images uploaded to our server database for public bookstore display.</li>
+                  <li><strong>Payment Reference:</strong> Sender reference or gateway transaction ID strictly for confirming and unlocking your order.</li>
                 </ul>
               </section>
 
               <section className="space-y-2">
-                <h4 className="font-bold text-stone-900 text-sm">2. Payment Security &amp; PCI-DSS</h4>
+                <h4 className="font-bold text-stone-900 text-sm">2. Payment Security &amp; Encryption</h4>
                 <p>
-                  All transactions are handled directly through Paystack&apos;s encrypted payment gateway. Open Shelf never sees, collects, or stores your credit/debit card numbers, CVVs, or bank credentials. All communications use TLS 1.3 encryption.
+                  Online card and bank payments are processed through encrypted payment gateways or your own banking app. Open Shelf never sees, collects, or stores your credit/debit card numbers, CVVs, or bank login credentials.
                 </p>
               </section>
 
@@ -180,7 +174,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ onClose, initialTab = 't
               <section className="space-y-2">
                 <h4 className="font-bold text-stone-900 text-sm">5. Your Rights &amp; Data Erasure</h4>
                 <p>
-                  You have the right to request a copy of your personal data or request deletion of your account and uploaded titles at any time by contacting the Data Protection Officer at <a href="mailto:itljies@gmail.com" className="text-stone-900 font-semibold underline">itljies@gmail.com</a>.
+                  You have the right to request a copy of your personal data or request deletion of your account at any time by contacting the Data Protection Officer at <a href="mailto:itljies@gmail.com" className="text-stone-900 font-semibold underline">itljies@gmail.com</a>.
                 </p>
               </section>
             </div>

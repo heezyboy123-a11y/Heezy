@@ -308,10 +308,16 @@ app.post('/api/cities', (req, res) => {
   }
 });
 
-// 4. Paystack & Payout Bank Config API
+// 4. Payment Gateways & Payout Bank Config API
 app.get('/api/paystack-config', (req, res) => {
   const config = readJsonFile(CONFIG_FILE, {
+    activeGateway: 'bank_transfer',
     publicKey: 'pk_test_d34298a098c47b5204781498b5840212a4c14c59',
+    flutterwavePublicKey: '',
+    enableFlutterwave: false,
+    paymentLinkUrl: '',
+    paymentLinkLabel: 'Selar / Instant Checkout',
+    enablePaymentLink: false,
     isLive: false,
     businessName: 'Open Shelf Books',
     allowInternationalCards: true,
@@ -321,7 +327,7 @@ app.get('/api/paystack-config', (req, res) => {
     accountNumber: '',
     accountName: '',
     ownerWhatsapp: '',
-    enableBankTransfer: false,
+    enableBankTransfer: true,
   });
   res.json(config);
 });

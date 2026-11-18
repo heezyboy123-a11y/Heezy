@@ -1,5 +1,11 @@
 {
+  "activeGateway": "bank_transfer",
   "publicKey": "pk_test_d34298a098c47b5204781498b5840212a4c14c59",
+  "flutterwavePublicKey": "",
+  "enableFlutterwave": false,
+  "paymentLinkUrl": "",
+  "paymentLinkLabel": "Selar / Instant Checkout",
+  "enablePaymentLink": false,
   "isLive": false,
   "businessName": "Open Shelf Books",
   "allowInternationalCards": true,
@@ -9,5 +15,5 @@
   "accountNumber": "",
   "accountName": "",
   "ownerWhatsapp": "",
-  "enableBankTransfer": false
+  "enableBankTransfer": true
 }
