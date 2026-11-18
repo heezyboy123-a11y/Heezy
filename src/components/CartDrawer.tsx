@@ -9,12 +9,22 @@ import {
   CreditCard,
   ShieldCheck,
   CheckCircle2,
-  ExternalLink,
   BookOpen,
-  ArrowRight,
+  Landmark,
+  Copy,
+  Check,
+  Clock,
+  RefreshCw,
+  MessageCircle,
 } from 'lucide-react';
-import { initiatePaystackPayment, generatePaystackReference } from '../services/paystack';
-import { saveOrder } from '../services/storage';
+import { initiatePaystackPayment } from '../services/paystack';
+import {
+  saveOrder,
+  getPaystackConfig,
+  fetchServerPaystackConfig,
+  fetchServerOrders,
+  PaystackConfig,
+} from '../services/storage';
 import { getBookFileBlob } from '../services/fileStore';
 import { buildCleanFileName } from '../services/ebookCleaner';
 
@@ -51,14 +61,51 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryNotes, setDeliveryNotes] = useState('');
 
+  // Payout / Payment config & method selection
+  const [payoutConfig, setPayoutConfig] = useState<PaystackConfig>(() => getPaystackConfig());
+  const hasBankAccount = Boolean(
+    payoutConfig.enableBankTransfer !== false &&
+      payoutConfig.bankName?.trim() &&
+      payoutConfig.accountNumber?.trim() &&
+      payoutConfig.accountName?.trim()
+  );
+  const isPaystackLive = Boolean(
+    payoutConfig.isLive && payoutConfig.publicKey && !payoutConfig.publicKey.startsWith('pk_test_')
+  );
+  const [paymentMethod, setPaymentMethod] = useState<'paystack' | 'bank_transfer'>(
+    hasBankAccount && !isPaystackLive ? 'bank_transfer' : 'paystack'
+  );
+  const [bankSenderRef, setBankSenderRef] = useState('');
+  const [copiedAccount, setCopiedAccount] = useState(false);
+
   // Payment processing & completed order states
   const [isProcessing, setIsProcessing] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
   // Check if cart has physical items
   const hasPhysicalItems = items.some((item) => item.format === 'print');
   const selectedCity = deliveryCities.find((c) => c.id === selectedCityId) || deliveryCities[0];
+
+  // Refresh latest store bank/paystack config when bag opens
+  useEffect(() => {
+    fetchServerPaystackConfig().then((cfg) => {
+      setPayoutConfig(cfg);
+      const bankReady = Boolean(
+        cfg.enableBankTransfer !== false &&
+          cfg.bankName?.trim() &&
+          cfg.accountNumber?.trim() &&
+          cfg.accountName?.trim()
+      );
+      const liveReady = Boolean(
+        cfg.isLive && cfg.publicKey && !cfg.publicKey.startsWith('pk_test_')
+      );
+      if (bankReady && !liveReady) {
+        setPaymentMethod('bank_transfer');
+      }
+    });
+  }, []);
 
   // Whenever a buyer orders a hardcopy (print) edition, automatically apply City Courier delivery fee
   useEffect(() => {
@@ -136,6 +183,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         totalUSD: 0,
         totalNGN: 0,
         currency,
+        paymentMethod: 'free',
         paymentStatus: 'free_granted',
         deliveryStatus: hasPhysicalItems ? 'preparing' : undefined,
         downloadAccessGranted: true,
@@ -143,6 +191,42 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
       saveOrder(freeOrder);
       setCompletedOrder(freeOrder);
+      onClearCart();
+      return;
+    }
+
+    // Direct Bank Transfer (straight into Store Owner's Bank Account)
+    if (paymentMethod === 'bank_transfer' && hasBankAccount) {
+      if (!bankSenderRef.trim()) {
+        setErrorMessage(
+          'Please enter the Sender Name or Bank Transfer Reference after sending your transfer.'
+        );
+        return;
+      }
+
+      const bankOrder: Order = {
+        id: orderId,
+        date: new Date().toISOString(),
+        items: [...items],
+        customerEmail,
+        customerName,
+        customerPhone,
+        destinationType,
+        deliveryCity: destinationType === 'domestic' ? selectedCity?.name : undefined,
+        deliveryAddress: destinationType === 'domestic' ? deliveryAddress : undefined,
+        deliveryInstructions: deliveryNotes,
+        totalUSD,
+        totalNGN,
+        currency,
+        paymentMethod: 'bank_transfer',
+        bankTransferRef: bankSenderRef.trim(),
+        paymentStatus: 'pending',
+        deliveryStatus: hasPhysicalItems ? 'preparing' : undefined,
+        downloadAccessGranted: false,
+      };
+
+      saveOrder(bankOrder);
+      setCompletedOrder(bankOrder);
       onClearCart();
       return;
     }
@@ -182,6 +266,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           totalNGN,
           currency,
           paystackReference: ref,
+          paymentMethod: 'paystack',
           paymentStatus: 'paid',
           deliveryStatus: hasPhysicalItems ? 'preparing' : undefined,
           downloadAccessGranted: true,
@@ -201,6 +286,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     });
   };
 
+  const handleRefreshOrderStatus = async () => {
+    if (!completedOrder) return;
+    setIsCheckingStatus(true);
+    const latestOrders = await fetchServerOrders();
+    const matched = latestOrders.find((o) => o.id === completedOrder.id);
+    if (matched) {
+      setCompletedOrder(matched);
+    }
+    setIsCheckingStatus(false);
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-stone-950/60 backdrop-blur-xs flex justify-end animate-in fade-in duration-200">
       <div className="w-full max-w-lg bg-white h-full shadow-2xl flex flex-col justify-between overflow-y-auto">
@@ -208,7 +304,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         <div className="p-5 border-b border-stone-200 flex items-center justify-between bg-stone-50">
           <div className="flex items-center gap-2">
             <span className="font-serif text-xl font-bold text-stone-900">
-              {completedOrder ? 'Order Confirmed' : 'Your Book Bag'}
+              {completedOrder
+                ? completedOrder.downloadAccessGranted
+                  ? 'Order Confirmed'
+                  : 'Transfer Submitted'
+                : 'Your Book Bag'}
             </span>
             {!completedOrder && (
               <span className="font-mono text-xs text-stone-500">
@@ -227,28 +327,71 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         {/* COMPLETED ORDER VIEW */}
         {completedOrder ? (
           <div className="p-6 space-y-6 flex-1 overflow-y-auto">
-            <div className="text-center space-y-2 py-4">
-              <div className="w-14 h-14 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                <CheckCircle2 className="w-8 h-8" />
+            {completedOrder.downloadAccessGranted ? (
+              <div className="text-center space-y-2 py-4">
+                <div className="w-14 h-14 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <h3 className="font-serif text-2xl font-bold text-stone-900">
+                  Thank You, {completedOrder.customerName}!
+                </h3>
+                <p className="text-xs text-stone-600 font-mono">
+                  Order #{completedOrder.id} · Ref:{' '}
+                  {completedOrder.paystackReference || completedOrder.bankTransferRef || 'FREE_GRANT'}
+                </p>
               </div>
-              <h3 className="font-serif text-2xl font-bold text-stone-900">
-                Thank You, {completedOrder.customerName}!
-              </h3>
-              <p className="text-xs text-stone-600 font-mono">
-                Order #{completedOrder.id} · Paystack Ref:{' '}
-                {completedOrder.paystackReference || 'FREE_GRANT'}
-              </p>
-            </div>
+            ) : (
+              <div className="text-center space-y-3 py-4">
+                <div className="w-14 h-14 mx-auto rounded-full bg-amber-100 text-amber-700 flex items-center justify-center">
+                  <Clock className="w-8 h-8" />
+                </div>
+                <h3 className="font-serif text-2xl font-bold text-stone-900">
+                  Awaiting Transfer Verification
+                </h3>
+                <p className="text-xs text-stone-600 leading-relaxed max-w-sm mx-auto">
+                  Order <strong className="font-mono">#{completedOrder.id}</strong> (Sender Ref:{' '}
+                  <strong className="font-mono">{completedOrder.bankTransferRef}</strong>) is recorded. Once the Store Owner confirms your bank alert of{' '}
+                  <strong>₦{completedOrder.totalNGN.toLocaleString()}</strong>, your ebooks unlock immediately below.
+                </p>
 
-            {/* Instant Ebook Downloads Card */}
-            <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-lg space-y-3">
-              <div className="flex items-center gap-2 text-emerald-900 font-semibold text-sm">
-                <Download className="w-4 h-4 text-emerald-700" />
-                <span>Instant Digital Downloads Ready</span>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleRefreshOrderStatus}
+                    disabled={isCheckingStatus}
+                    className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isCheckingStatus ? 'animate-spin' : ''}`} />
+                    <span>{isCheckingStatus ? 'Checking...' : 'Check Approval Status'}</span>
+                  </button>
+
+                  {payoutConfig.ownerWhatsapp && (
+                    <a
+                      href={`https://wa.me/${payoutConfig.ownerWhatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(
+                        `Hello Open Shelf, I just transferred ₦${completedOrder.totalNGN.toLocaleString()} for Order #${completedOrder.id} (Sender/Ref: ${completedOrder.bankTransferRef}).`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-md flex items-center gap-1.5"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>Send Receipt on WhatsApp</span>
+                    </a>
+                  )}
+                </div>
               </div>
-              <p className="text-xs text-emerald-800 leading-relaxed">
-                Your digital reading access is active! You can download your ebooks or read them right in your browser now.
-              </p>
+            )}
+
+            {/* Instant Ebook Downloads Card (unlocked once paid/confirmed) */}
+            {completedOrder.downloadAccessGranted && (
+              <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-lg space-y-3">
+                <div className="flex items-center gap-2 text-emerald-900 font-semibold text-sm">
+                  <Download className="w-4 h-4 text-emerald-700" />
+                  <span>Instant Digital Downloads Ready</span>
+                </div>
+                <p className="text-xs text-emerald-800 leading-relaxed">
+                  Your digital reading access is active! You can download your ebooks or read them right in your browser now.
+                </p>
               <div className="space-y-2 pt-2">
                 {completedOrder.items.map((item, idx) => (
                   <div
@@ -324,6 +467,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 ))}
               </div>
             </div>
+            )}
 
             {/* Physical Dispatch Card if applicable */}
             {completedOrder.deliveryCity && (
@@ -608,6 +752,125 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               </div>
             </div>
 
+              {/* Payment Method Selector */}
+              {!isFreeTotal && (
+                <div className="p-4 bg-stone-50 rounded-lg border border-stone-200 space-y-3">
+                  <span className="text-xs font-bold text-stone-900 block">
+                    Payment Method
+                  </span>
+
+                  <div className={`grid gap-2 ${hasBankAccount ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    {hasBankAccount && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('bank_transfer')}
+                        className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
+                          paymentMethod === 'bank_transfer'
+                            ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
+                            : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <Landmark className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Bank Transfer</span>
+                        </div>
+                        <span className="text-[11px] text-stone-500 block leading-tight">
+                          Direct transfer to Store Bank Account.
+                        </span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('paystack')}
+                      className={`p-2.5 rounded-md border text-xs font-medium text-left transition-all cursor-pointer ${
+                        paymentMethod === 'paystack'
+                          ? 'border-stone-900 bg-white ring-1 ring-stone-900 text-stone-900 font-semibold'
+                          : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <CreditCard className="w-3.5 h-3.5 text-stone-800" />
+                        <span>Card / Paystack</span>
+                      </div>
+                      <span className="text-[11px] text-stone-500 block leading-tight">
+                        {isPaystackLive
+                          ? 'Visa, Mastercard, Verve (Live).'
+                          : 'Paystack Sandbox (Test Mode).'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Direct Bank Account Transfer Box */}
+                  {paymentMethod === 'bank_transfer' && hasBankAccount && (
+                    <div className="p-3 bg-white rounded-md border border-emerald-200 space-y-2.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-stone-700">Bank:</span>
+                        <span className="font-bold text-stone-900">{payoutConfig.bankName}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-stone-700">Account Number:</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-bold text-stone-900 text-sm">
+                            {payoutConfig.accountNumber}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(payoutConfig.accountNumber || '');
+                              setCopiedAccount(true);
+                              setTimeout(() => setCopiedAccount(false), 1800);
+                            }}
+                            className="px-2 py-0.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded border border-stone-300 text-[10px] font-medium flex items-center gap-1"
+                          >
+                            {copiedAccount ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-600" />
+                                <span>Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>Copy</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-stone-700">Account Name:</span>
+                        <span className="font-bold text-stone-900">{payoutConfig.accountName}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1.5 border-t border-stone-100">
+                        <span className="font-semibold text-stone-700">Exact Transfer Amount:</span>
+                        <span className="font-mono font-bold text-emerald-800">
+                          ₦{totalNGN.toLocaleString()}
+                        </span>
+                      </div>
+
+                      <div className="pt-1">
+                        <label className="text-[11px] font-semibold text-stone-700 block mb-1">
+                          Sender Name / Bank Reference (after sending) *
+                        </label>
+                        <input
+                          type="text"
+                          value={bankSenderRef}
+                          onChange={(e) => setBankSenderRef(e.target.value)}
+                          placeholder="e.g. Chinedu Okafor / NIP-948201"
+                          className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-300 rounded-md focus:outline-none focus:ring-1 focus:ring-stone-800"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentMethod === 'paystack' && !isPaystackLive && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900">
+                      Paystack is currently in <strong>Sandbox Test Mode</strong> until the Store Owner links their live Paystack merchant key (<code className="font-mono">pk_live_...</code>).
+                    </div>
+                  )}
+                </div>
+              )}
+
             {errorMessage && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700">
                 {errorMessage}
@@ -639,13 +902,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               </div>
             </div>
 
-            {/* Paystack Payment Button */}
+            {/* Payment Submit Button */}
             <button
               onClick={handleCheckout}
               disabled={isProcessing}
-              className={`w-full py-3 rounded-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-xs ${
+              className={`w-full py-3 rounded-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer ${
                 isFreeTotal
                   ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                  : paymentMethod === 'bank_transfer' && hasBankAccount
+                  ? 'bg-emerald-800 hover:bg-emerald-900 text-white'
                   : 'bg-stone-900 hover:bg-stone-800 text-white'
               }`}
             >
@@ -656,19 +921,32 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <Download className="w-4 h-4" />
                   <span>Claim Free Ebooks Now</span>
                 </>
+              ) : paymentMethod === 'bank_transfer' && hasBankAccount ? (
+                <>
+                  <Landmark className="w-4 h-4" />
+                  <span>I Have Transferred ₦{totalNGN.toLocaleString()} · Submit Order</span>
+                </>
               ) : (
                 <>
                   <CreditCard className="w-4 h-4" />
-                  <span>Pay with Paystack · International &amp; Local Cards</span>
+                  <span>
+                    {isPaystackLive
+                      ? 'Pay with Paystack · International & Local Cards'
+                      : 'Pay with Paystack (Test Mode)'}
+                  </span>
                 </>
               )}
             </button>
 
-            {/* Paystack Trust badge */}
+            {/* Trust badge */}
             <div className="text-center space-y-1">
               <div className="flex items-center justify-center gap-1.5 text-[11px] text-stone-500">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Secured by Paystack · Accepts Visa, Mastercard, Verve &amp; Amex</span>
+                <span>
+                  {paymentMethod === 'bank_transfer' && hasBankAccount
+                    ? 'Direct bank transfer to Store Owner bank account'
+                    : 'Secured by Paystack · Accepts Visa, Mastercard, Verve & Amex'}
+                </span>
               </div>
             </div>
           </div>

@@ -7,6 +7,7 @@ import {
   fetchServerBooks,
   fetchServerOrders,
   fetchServerCities,
+  fetchServerPaystackConfig,
   addBook,
   addBooksBatch,
   updateBook,
@@ -107,6 +108,7 @@ export default function App() {
     });
     fetchServerOrders().then((o) => setOrders(o));
     fetchServerCities().then((c) => setDeliveryCities(c));
+    fetchServerPaystackConfig().catch(() => {});
   }, []);
 
   // Handle new book uploaded by author/seller from phone
@@ -597,6 +599,7 @@ export default function App() {
           onBookUploaded={handleBookUploaded}
           onBooksBatchUploaded={handleBooksBatchUploaded}
           currentUser={currentUser}
+          existingBooks={books}
         />
       )}
 
@@ -616,11 +619,11 @@ export default function App() {
         <ReaderModal book={readingBook} onClose={() => setReadingBook(null)} />
       )}
 
-      {/* 6. Paystack & Store Configuration Modal (Owner Only) */}
+      {/* 6. Bank Payout & Paystack Configuration Modal (Owner Only) */}
       {isSettingsOpen && isStoreOwner && (
         <PaystackSettingsModal
           onClose={() => setIsSettingsOpen(false)}
-          onConfigSaved={() => showToast('Paystack settings updated successfully')}
+          onConfigSaved={() => showToast('Bank payout & Paystack settings updated successfully')}
         />
       )}
 

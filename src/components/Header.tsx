@@ -201,7 +201,16 @@ export const Header: React.FC<HeaderProps> = ({
                         }}
                         className="w-full text-left px-2.5 py-1.5 hover:bg-stone-100 rounded text-stone-700"
                       >
-                        Courier Deliveries
+                        Orders &amp; Dispatch
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onOpenSettings();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 hover:bg-stone-100 rounded text-stone-700"
+                      >
+                        Bank &amp; Paystack Payout
                       </button>
                     </>
                   )}
@@ -263,7 +272,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={onOpenSettings}
                 className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
-                title="Paystack & Store Settings"
+                title="Bank Payout & Paystack Settings"
               >
                 <SlidersHorizontal className="w-4 h-4" />
               </button>

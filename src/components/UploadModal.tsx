@@ -25,6 +25,8 @@ import {
   analyzeDeviceEbookFile,
   buildCleanFileName,
   stripSiteWatermarks,
+  normalizeBookTitleKey,
+  parseBookFilename,
   detectFileType,
   formatBytes,
   suggestVariedBookPrice,
@@ -88,6 +90,7 @@ interface UploadModalProps {
   onBookUploaded: (newBook: Book) => void;
   onBooksBatchUploaded?: (newBooks: Book[]) => void;
   currentUser?: User | null;
+  existingBooks?: Book[];
 }
 
 export const UploadModal: React.FC<UploadModalProps> = ({
@@ -95,6 +98,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   onBookUploaded,
   onBooksBatchUploaded,
   currentUser = null,
+  existingBooks = [],
 }) => {
   const isStoreOwner = isStoreOwnerUser(currentUser);
 
@@ -125,6 +129,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [isPublishingBatch, setIsPublishingBatch] = useState(false);
   const [isBatchDragOver, setIsBatchDragOver] = useState(false);
   const [activeCoverEditDraftId, setActiveCoverEditDraftId] = useState<string | null>(null);
+  const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
 
   const pendingFilesRef = useRef<Map<string, File>>(new Map());
   const batchFileInputRef = useRef<HTMLInputElement>(null);
@@ -195,16 +200,42 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     const existingSignatures = new Set(
       batchItems.map((item) => `${item.rawFileName}::${item.fileSize}`)
     );
-    const uniqueFiles = candidates.filter(
-      (f) => !existingSignatures.has(`${f.name}::${formatBytes(f.size)}`)
-    );
+    const knownTitleKeys = new Set([
+      ...existingBooks.map((b) => normalizeBookTitleKey(b.title)),
+      ...batchItems.map((b) => normalizeBookTitleKey(b.title)),
+    ]);
 
-    if (uniqueFiles.length === 0) return;
+    let skippedDuplicates = 0;
+    const uniqueFiles: File[] = [];
+    for (const f of candidates) {
+      const sig = `${f.name}::${formatBytes(f.size)}`;
+      const parsedNameKey = normalizeBookTitleKey(parseBookFilename(f.name).title);
+      if (existingSignatures.has(sig) || (parsedNameKey && knownTitleKeys.has(parsedNameKey))) {
+        skippedDuplicates += 1;
+        continue;
+      }
+      if (parsedNameKey) knownTitleKeys.add(parsedNameKey);
+      existingSignatures.add(sig);
+      uniqueFiles.push(f);
+    }
+
+    if (uniqueFiles.length === 0) {
+      if (skippedDuplicates > 0) {
+        setDuplicateNotice(
+          `Skipped ${skippedDuplicates} duplicate book${skippedDuplicates > 1 ? 's' : ''} already in your queue or live on Open Shelf — keeping one copy per title.`
+        );
+      }
+      return;
+    }
 
     setIsAnalyzingBatch(true);
     setBatchProgress({ current: 0, total: uniqueFiles.length, currentName: uniqueFiles[0].name });
 
     const analyzedDrafts: BatchDraftItem[] = [];
+    const seenAnalyzedKeys = new Set([
+      ...existingBooks.map((b) => normalizeBookTitleKey(b.title)),
+      ...batchItems.map((b) => normalizeBookTitleKey(b.title)),
+    ]);
     const CONCURRENCY = 2; // Keeps memory steady even when uploading 100+ PDFs at once
     let completedCount = 0;
 
@@ -220,6 +251,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             total: uniqueFiles.length,
             currentName: analyzed.title,
           });
+          const titleKey = normalizeBookTitleKey(analyzed.title);
+          if (titleKey && seenAnalyzedKeys.has(titleKey)) {
+            skippedDuplicates += 1;
+            return null;
+          }
+          if (titleKey) seenAnalyzedKeys.add(titleKey);
+
           const draftId = `draft-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
           pendingFilesRef.current.set(draftId, file);
 
@@ -254,7 +292,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           } satisfies BatchDraftItem;
         })
       );
-      analyzedDrafts.push(...chunkResults);
+      for (const item of chunkResults) {
+        if (item) analyzedDrafts.push(item);
+      }
+    }
+
+    if (skippedDuplicates > 0) {
+      setDuplicateNotice(
+        `Skipped ${skippedDuplicates} duplicate book${skippedDuplicates > 1 ? 's' : ''} already in your queue or live on Open Shelf — keeping one copy per title.`
+      );
+    } else {
+      setDuplicateNotice(null);
     }
 
     setBatchItems((prev) => [...analyzedDrafts, ...prev]);
@@ -758,6 +806,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 </div>
               )}
             </div>
+
+            {duplicateNotice && (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-2">
+                <span>{duplicateNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setDuplicateNotice(null)}
+                  className="text-amber-700 hover:text-amber-900 font-semibold shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             {/* Batch Queue Review Table / Cards */}
             {batchItems.length > 0 && (

@@ -89,6 +89,20 @@ export function stripSiteWatermarks(input: string): string {
   return cleaned;
 }
 
+/**
+ * Normalizes a book title into a canonical comparison key so duplicate uploads
+ * (including "(1)", "(2)", "_copy", OceanofPDF tags, or punctuation differences) are detected accurately.
+ */
+export function normalizeBookTitleKey(title: string): string {
+  return stripSiteWatermarks(title || '')
+    .toLowerCase()
+    .replace(/\(\s*\d+\s*\)$/g, '')
+    .replace(/[_-]+copy\s*\d*$/gi, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function isJunkMetadataValue(val: string): boolean {
   const lower = val.toLowerCase().trim();
   if (!lower || lower.length < 2) return true;

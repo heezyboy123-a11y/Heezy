@@ -125,14 +125,58 @@ const INITIAL_CITIES = [
   },
 ];
 
-// Initialize data if not yet present, and purge non-real placeholder entries
+function normalizeServerTitleKey(title: string): string {
+  return String(title || '')
+    .replace(/[\[\(_\s-]*(www\.)?ocean\s*of\s*pdf(\.com)?[\]\)_\s-]*/gi, ' ')
+    .replace(/[\[\(_\s-]*(pdfdrive|z-lib|zlibrary|annas-archive|libgen)(\.[a-z]+)?[\]\)_\s-]*/gi, ' ')
+    .toLowerCase()
+    .replace(/\(\s*\d+\s*\)$/g, '')
+    .replace(/[_-]+copy\s*\d*$/gi, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function scoreServerBookQuality(book: any): number {
+  let score = 0;
+  if (book.coverOrigin === 'page1' || book.coverOrigin === 'embedded' || book.coverOrigin === 'custom') score += 50;
+  else if (book.coverOrigin === 'official') score += 25;
+  else if (book.coverUrl && !String(book.coverUrl).startsWith('data:image/svg')) score += 15;
+  const authorLower = String(book.author || '').toLowerCase();
+  if (authorLower && authorLower !== 'independent author' && authorLower !== 'unknown author') score += 15;
+  if (book.pageCount) score += 10;
+  if (book.sampleContent && String(book.sampleContent).length > 100) score += 5;
+  return score;
+}
+
+function deduplicateServerBooks(list: any[]): any[] {
+  const byKey = new Map<string, any>();
+  const orderedKeys: string[] = [];
+
+  for (const book of list) {
+    if (!book || LEGACY_PLACEHOLDER_IDS.has(book.id) || book.isUserUploaded !== true) continue;
+    const titleKey = normalizeServerTitleKey(book.title) || String(book.id);
+    const existing = byKey.get(titleKey);
+    if (!existing) {
+      byKey.set(titleKey, book);
+      orderedKeys.push(titleKey);
+    } else {
+      // Keep the higher-quality single copy (e.g. Page 1 cover, known author)
+      if (scoreServerBookQuality(book) > scoreServerBookQuality(existing)) {
+        byKey.set(titleKey, book);
+      }
+    }
+  }
+
+  return orderedKeys.map((k) => byKey.get(k));
+}
+
+// Initialize data if not yet present, and purge non-real placeholder & duplicate entries
 if (!fs.existsSync(BOOKS_FILE)) {
   writeJsonFile(BOOKS_FILE, INITIAL_BOOKS);
 } else {
   const existingBooks = readJsonFile<any[]>(BOOKS_FILE, []);
-  const cleanedBooks = existingBooks.filter(
-    (b) => b && !LEGACY_PLACEHOLDER_IDS.has(b.id) && b.isUserUploaded === true
-  );
+  const cleanedBooks = deduplicateServerBooks(existingBooks);
   if (cleanedBooks.length !== existingBooks.length) {
     writeJsonFile(BOOKS_FILE, cleanedBooks);
   }
@@ -150,8 +194,12 @@ if (!fs.existsSync(ORDERS_FILE)) {
 
 // 1. Books API
 app.get('/api/books', (req, res) => {
-  const books = readJsonFile(BOOKS_FILE, INITIAL_BOOKS);
-  res.json(books);
+  const rawBooks = readJsonFile<any[]>(BOOKS_FILE, INITIAL_BOOKS);
+  const cleanedBooks = deduplicateServerBooks(rawBooks);
+  if (cleanedBooks.length !== rawBooks.length) {
+    writeJsonFile(BOOKS_FILE, cleanedBooks);
+  }
+  res.json(cleanedBooks);
 });
 
 app.post('/api/books', (req, res) => {
@@ -161,10 +209,11 @@ app.post('/api/books', (req, res) => {
       return res.status(400).json({ error: 'Title and author are required.' });
     }
     const current = readJsonFile<any[]>(BOOKS_FILE, INITIAL_BOOKS);
+    const incomingKey = normalizeServerTitleKey(newBook.title);
     const filtered = current.filter(
-      (b) => b.id !== newBook.id && b.title?.toLowerCase().trim() !== newBook.title?.toLowerCase().trim()
+      (b) => b.id !== newBook.id && normalizeServerTitleKey(b.title) !== incomingKey
     );
-    const updated = [newBook, ...filtered];
+    const updated = deduplicateServerBooks([newBook, ...filtered]);
     writeJsonFile(BOOKS_FILE, updated);
     res.status(201).json(newBook);
   } catch (err) {
@@ -177,7 +226,9 @@ app.put('/api/books/:id', (req, res) => {
     const { id } = req.params;
     const updatedBook = req.body;
     const current = readJsonFile<any[]>(BOOKS_FILE, INITIAL_BOOKS);
-    const updated = current.map((b) => (b.id === id ? { ...b, ...updatedBook } : b));
+    const updated = deduplicateServerBooks(
+      current.map((b) => (b.id === id ? { ...b, ...updatedBook } : b))
+    );
     writeJsonFile(BOOKS_FILE, updated);
     res.json({ success: true });
   } catch (err) {
@@ -218,14 +269,16 @@ app.post('/api/orders', (req, res) => {
 app.patch('/api/orders/:id', (req, res) => {
   try {
     const { id } = req.params;
-    const { deliveryStatus, dispatcherNotes } = req.body;
+    const { deliveryStatus, dispatcherNotes, paymentStatus, downloadAccessGranted } = req.body;
     const current = readJsonFile<any[]>(ORDERS_FILE, []);
     const updated = current.map((ord) => {
       if (ord.id === id) {
         return {
           ...ord,
-          ...(deliveryStatus ? { deliveryStatus } : {}),
+          ...(deliveryStatus !== undefined ? { deliveryStatus } : {}),
           ...(dispatcherNotes !== undefined ? { dispatcherNotes } : {}),
+          ...(paymentStatus !== undefined ? { paymentStatus } : {}),
+          ...(downloadAccessGranted !== undefined ? { downloadAccessGranted } : {}),
         };
       }
       return ord;
@@ -255,14 +308,20 @@ app.post('/api/cities', (req, res) => {
   }
 });
 
-// 4. Paystack Config API
+// 4. Paystack & Payout Bank Config API
 app.get('/api/paystack-config', (req, res) => {
   const config = readJsonFile(CONFIG_FILE, {
     publicKey: 'pk_test_d34298a098c47b5204781498b5840212a4c14c59',
     isLive: false,
     businessName: 'Open Shelf Books',
     allowInternationalCards: true,
+    supportEmail: 'heezyboy123@gmail.com',
     currency: 'USD',
+    bankName: '',
+    accountNumber: '',
+    accountName: '',
+    ownerWhatsapp: '',
+    enableBankTransfer: true,
   });
   res.json(config);
 });

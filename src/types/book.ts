@@ -87,6 +87,8 @@ export interface Order {
   totalNGN: number;
   currency: Currency;
   paystackReference?: string;
+  paymentMethod?: 'paystack' | 'bank_transfer' | 'free';
+  bankTransferRef?: string;
   paymentStatus: 'paid' | 'pending' | 'free_granted';
   deliveryStatus?: 'unassigned' | 'preparing' | 'with_courier' | 'delivered';
   dispatcherNotes?: string;

@@ -10,8 +10,13 @@ import {
   CheckCircle,
   Plus,
   Filter,
+  Landmark,
 } from 'lucide-react';
-import { updateOrderStatus, saveCities } from '../services/storage';
+import {
+  updateOrderStatus,
+  confirmBankTransferOrder,
+  saveCities,
+} from '../services/storage';
 
 interface DispatcherModalProps {
   isOpen?: boolean;
@@ -29,6 +34,12 @@ export const DispatcherModal: React.FC<DispatcherModalProps> = ({
   deliveryCities,
   onCitiesUpdated,
 }) => {
+  const pendingBankCount = orders.filter(
+    (o) => o.paymentMethod === 'bank_transfer' && o.paymentStatus === 'pending'
+  ).length;
+  const [boardTab, setBoardTab] = useState<'payments' | 'dispatch'>(
+    pendingBankCount > 0 ? 'payments' : 'dispatch'
+  );
   const [selectedCityFilter, setSelectedCityFilter] = useState<string>('all');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('all');
 
@@ -47,6 +58,11 @@ export const DispatcherModal: React.FC<DispatcherModalProps> = ({
     if (selectedStatusFilter !== 'all' && ord.deliveryStatus !== selectedStatusFilter) return false;
     return true;
   });
+
+  const handleConfirmBankPayment = async (orderId: string) => {
+    const updated = await confirmBankTransferOrder(orderId);
+    onOrdersUpdated(updated);
+  };
 
   const handleStatusChange = async (orderId: string, newStatus: Order['deliveryStatus']) => {
     const updated = await updateOrderStatus(orderId, newStatus);
@@ -90,10 +106,10 @@ export const DispatcherModal: React.FC<DispatcherModalProps> = ({
             </div>
             <div>
               <h2 className="font-serif text-lg font-bold text-stone-900 leading-tight">
-                City Courier Logistics Board
+                Orders, Bank Transfers &amp; Courier Dispatch
               </h2>
               <p className="text-xs text-stone-500">
-                Manage hand-deliveries, rider dispatch notes, and city coverage
+                Verify direct bank transfers to unlock ebooks and manage hardcopy deliveries
               </p>
             </div>
           </div>
@@ -105,7 +121,41 @@ export const DispatcherModal: React.FC<DispatcherModalProps> = ({
           </button>
         </div>
 
-        {/* Toolbar: Filters & Add City Action */}
+        {/* Mode Tabs */}
+        <div className="px-6 py-2.5 bg-white border-b border-stone-200 flex items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setBoardTab('payments')}
+            className={`px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+              boardTab === 'payments'
+                ? 'bg-stone-900 text-white'
+                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+            }`}
+          >
+            <Landmark className="w-3.5 h-3.5" />
+            <span>Orders &amp; Bank Transfers ({orders.length})</span>
+            {pendingBankCount > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-400 text-stone-950 font-mono text-[10px] font-bold">
+                {pendingBankCount} pending
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setBoardTab('dispatch')}
+            className={`px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+              boardTab === 'dispatch'
+                ? 'bg-stone-900 text-white'
+                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+            }`}
+          >
+            <Truck className="w-3.5 h-3.5" />
+            <span>City Courier Dispatch ({physicalOrders.length})</span>
+          </button>
+        </div>
+
+        {/* Toolbar: Filters & Add City Action (Dispatch Tab only) */}
+        {boardTab === 'dispatch' && (
         <div className="p-4 bg-stone-100/70 border-b border-stone-200 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-stone-500 font-medium flex items-center gap-1">
@@ -144,9 +194,10 @@ export const DispatcherModal: React.FC<DispatcherModalProps> = ({
             <span>Add Delivery City</span>
           </button>
         </div>
+        )}
 
         {/* Add City Drawer/Form */}
-        {showAddCity && (
+        {boardTab === 'dispatch' && showAddCity && (
           <form
             onSubmit={handleAddCity}
             className="p-4 bg-amber-50/70 border-b border-amber-200 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs"
@@ -202,7 +253,116 @@ export const DispatcherModal: React.FC<DispatcherModalProps> = ({
 
         {/* Orders List */}
         <div className="overflow-y-auto p-6 space-y-4 flex-1">
-          {filteredOrders.length === 0 ? (
+          {boardTab === 'payments' ? (
+            orders.length === 0 ? (
+              <div className="text-center py-12 space-y-2">
+                <Landmark className="w-10 h-10 mx-auto text-stone-300" />
+                <p className="font-serif text-base font-semibold text-stone-800">
+                  No orders yet
+                </p>
+                <p className="text-xs text-stone-500">
+                  When customers pay via Bank Transfer or Paystack, all orders appear here for tracking and confirmation.
+                </p>
+              </div>
+            ) : (
+              orders.map((order) => (
+                <div
+                  key={order.id}
+                  className="p-4 bg-white rounded-lg border border-stone-200 shadow-xs space-y-3 text-xs"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-stone-900">#{order.id}</span>
+                      <span className="text-stone-400">·</span>
+                      <span className="text-stone-500">
+                        {new Date(order.date).toLocaleString()}
+                      </span>
+                      <span className="text-stone-400">·</span>
+                      <span className="font-mono font-bold text-stone-900">
+                        ₦{order.totalNGN.toLocaleString()} (${order.totalUSD.toFixed(2)})
+                      </span>
+                    </div>
+
+                    <span
+                      className={`px-2 py-0.5 rounded-full font-semibold text-[11px] ${
+                        order.paymentStatus === 'paid' || order.paymentStatus === 'free_granted'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {order.paymentStatus === 'paid'
+                        ? 'Confirmed Paid'
+                        : order.paymentStatus === 'free_granted'
+                        ? 'Free Grant'
+                        : 'Pending Bank Transfer'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <span className="font-semibold text-stone-900 block">
+                        {order.customerName}
+                      </span>
+                      <span className="text-stone-500 block">{order.customerEmail}</span>
+                      {order.customerPhone && (
+                        <span className="font-mono text-stone-600 block">
+                          {order.customerPhone}
+                        </span>
+                      )}
+                    </div>
+                    <div className="bg-stone-50 p-2.5 rounded border border-stone-200 space-y-1">
+                      <span className="text-stone-600 block">
+                        Method:{' '}
+                        <strong className="text-stone-900 uppercase">
+                          {order.paymentMethod || 'paystack'}
+                        </strong>
+                      </span>
+                      {order.bankTransferRef && (
+                        <span className="text-stone-600 block">
+                          Sender / Bank Ref:{' '}
+                          <strong className="font-mono text-stone-900">
+                            {order.bankTransferRef}
+                          </strong>
+                        </span>
+                      )}
+                      {order.paystackReference && (
+                        <span className="text-stone-600 block">
+                          Paystack Ref:{' '}
+                          <strong className="font-mono text-stone-900">
+                            {order.paystackReference}
+                          </strong>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-100">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {order.items.map((item, idx) => (
+                        <span
+                          key={idx}
+                          className="bg-stone-100 px-2 py-0.5 rounded text-stone-800 font-medium"
+                        >
+                          {item.quantity}x {item.book.title} ({item.format})
+                        </span>
+                      ))}
+                    </div>
+
+                    {order.paymentStatus === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmBankPayment(order.id)}
+                        className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold rounded flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Confirm Transfer Received &amp; Unlock Ebooks</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )
+          ) : filteredOrders.length === 0 ? (
             <div className="text-center py-12 space-y-2">
               <Truck className="w-10 h-10 mx-auto text-stone-300" />
               <p className="font-serif text-base font-semibold text-stone-800">

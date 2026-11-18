@@ -2,7 +2,7 @@ import { Book, Order, DeliveryCity, User } from '../types/book';
 import { INITIAL_BOOKS, INITIAL_DELIVERY_CITIES } from '../data/initialBooks';
 import { generateCanvasBookCover, CoverThemeId } from './coverGenerator';
 import { deleteBookFileBlob, getBookFileBlob } from './fileStore';
-import { extractOriginalCoverFromBlob, lookupOfficialBookDetails, stripSiteWatermarks } from './ebookCleaner';
+import { extractOriginalCoverFromBlob, lookupOfficialBookDetails, normalizeBookTitleKey, stripSiteWatermarks } from './ebookCleaner';
 
 const BOOKS_STORAGE_KEY = 'openshelf_books_v1';
 const ORDERS_STORAGE_KEY = 'openshelf_orders_v1';
@@ -17,6 +17,11 @@ export interface PaystackConfig {
   allowInternationalCards: boolean;
   supportEmail: string;
   currency: 'USD' | 'NGN' | 'GBP';
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  ownerWhatsapp?: string;
+  enableBankTransfer?: boolean;
 }
 
 const DEFAULT_PAYSTACK_CONFIG: PaystackConfig = {
@@ -24,8 +29,13 @@ const DEFAULT_PAYSTACK_CONFIG: PaystackConfig = {
   isLive: false,
   businessName: 'Open Shelf Books',
   allowInternationalCards: true,
-  supportEmail: 'itljies@gmail.com',
+  supportEmail: 'heezyboy123@gmail.com',
   currency: 'USD',
+  bankName: '',
+  accountNumber: '',
+  accountName: '',
+  ownerWhatsapp: '',
+  enableBankTransfer: true,
 };
 
 function fillMissingCovers(bookList: Book[]): Book[] {
@@ -87,6 +97,59 @@ export function isStoreOwnerUser(user: User | null): boolean {
   return STORE_OWNER_EMAILS.has(email) || user.role === 'admin';
 }
 
+function scoreBookQuality(book: Book): number {
+  let score = 0;
+  if (book.coverOrigin === 'page1' || book.coverOrigin === 'embedded' || book.coverOrigin === 'custom') {
+    score += 50;
+  } else if (book.coverOrigin === 'official') {
+    score += 25;
+  } else if (book.coverUrl && !book.coverUrl.startsWith('data:image/svg')) {
+    score += 15;
+  }
+  const authorLower = (book.author || '').toLowerCase();
+  if (authorLower && authorLower !== 'independent author' && authorLower !== 'unknown author') {
+    score += 15;
+  }
+  if (book.pageCount) score += 10;
+  if (book.sampleContent && book.sampleContent.length > 100) score += 5;
+  return score;
+}
+
+export function deduplicateBooks(list: Book[]): { unique: Book[]; removedIds: string[] } {
+  const byKey = new Map<string, Book>();
+  const orderedKeys: string[] = [];
+  const removedIds: string[] = [];
+
+  for (const book of list) {
+    if (!book || LEGACY_PLACEHOLDER_IDS.has(book.id) || book.isUserUploaded !== true) continue;
+    const key = normalizeBookTitleKey(book.title) || book.id;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, book);
+      orderedKeys.push(key);
+    } else {
+      if (scoreBookQuality(book) > scoreBookQuality(existing)) {
+        removedIds.push(existing.id);
+        byKey.set(key, book);
+      } else {
+        removedIds.push(book.id);
+      }
+    }
+  }
+
+  return {
+    unique: orderedKeys.map((k) => byKey.get(k)!),
+    removedIds,
+  };
+}
+
+function purgeDuplicateArtifacts(removedIds: string[]): void {
+  for (const dupId of removedIds) {
+    deleteBookFileBlob(dupId).catch(() => {});
+    fetch(`/api/books/${dupId}`, { method: 'DELETE' }).catch(() => {});
+  }
+}
+
 function filterRealBooks(list: Book[]): Book[] {
   return list.filter(
     (b) => b && !LEGACY_PLACEHOLDER_IDS.has(b.id) && b.isUserUploaded === true
@@ -105,15 +168,19 @@ export function getStoredBooks(): Book[] {
       return INITIAL_BOOKS;
     }
     const parsed: Book[] = JSON.parse(raw);
-    const realOnly = filterRealBooks(parsed).map((b) => ({
+    const cleaned = filterRealBooks(parsed).map((b) => ({
       ...b,
       title: stripSiteWatermarks(b.title) || b.title,
       author: stripSiteWatermarks(b.author) || b.author,
     }));
-    if (realOnly.length !== parsed.length) {
-      saveBooks(realOnly);
+    const { unique, removedIds } = deduplicateBooks(cleaned);
+    if (unique.length !== parsed.length || removedIds.length > 0) {
+      saveBooks(unique);
+      if (removedIds.length > 0) {
+        purgeDuplicateArtifacts(removedIds);
+      }
     }
-    return fillMissingCovers(realOnly);
+    return fillMissingCovers(unique);
   } catch {
     return [];
   }
@@ -139,14 +206,20 @@ export async function fetchServerBooks(): Promise<Book[]> {
         const localBooks = getStoredBooks();
         const serverRealBooks = filterRealBooks(rawBooks);
         const serverIds = new Set(serverRealBooks.map((b) => b.id));
+        const serverTitleKeys = new Set(serverRealBooks.map((b) => normalizeBookTitleKey(b.title)));
 
-        const localOnlyBooks = localBooks.filter((lb) => lb.isUserUploaded && !serverIds.has(lb.id));
+        const localOnlyBooks = localBooks.filter(
+          (lb) =>
+            lb.isUserUploaded &&
+            !serverIds.has(lb.id) &&
+            !serverTitleKeys.has(normalizeBookTitleKey(lb.title))
+        );
 
         const mergedServerBooks = serverRealBooks.map((serverBook) => {
           const match = localBooks.find(
             (lb) =>
               lb.id === serverBook.id ||
-              lb.title.toLowerCase().trim() === serverBook.title.toLowerCase().trim()
+              normalizeBookTitleKey(lb.title) === normalizeBookTitleKey(serverBook.title)
           );
           if (match && match.coverUrl && !serverBook.coverUrl) {
             return { ...serverBook, coverUrl: match.coverUrl, coverOrigin: match.coverOrigin };
@@ -154,7 +227,11 @@ export async function fetchServerBooks(): Promise<Book[]> {
           return serverBook;
         });
 
-        const combined = fillMissingCovers([...localOnlyBooks, ...mergedServerBooks]);
+        const { unique, removedIds } = deduplicateBooks([...localOnlyBooks, ...mergedServerBooks]);
+        if (removedIds.length > 0) {
+          purgeDuplicateArtifacts(removedIds);
+        }
+        const combined = fillMissingCovers(unique);
         saveBooks(combined);
         return combined;
       }
@@ -269,16 +346,31 @@ export async function addBook(newBook: Book): Promise<Book[]> {
 
 export async function addBooksBatch(newBooks: Book[]): Promise<Book[]> {
   const current = getStoredBooks();
-  // Avoid duplicates by title+author or id
-  const incomingTitles = new Set(newBooks.map((b) => b.title.toLowerCase().trim()));
-  const filteredCurrent = current.filter(
-    (b) => !newBooks.some((nb) => nb.id === b.id) && !incomingTitles.has(b.title.toLowerCase().trim())
-  );
-  const updated = [...newBooks, ...filteredCurrent];
+  // Deduplicate within incoming batch and against existing catalog using canonical title keys
+  const { unique: dedupedIncoming, removedIds: incomingDupIds } = deduplicateBooks(newBooks);
+  const incomingTitleKeys = new Set(dedupedIncoming.map((b) => normalizeBookTitleKey(b.title)));
+  const incomingIds = new Set(dedupedIncoming.map((b) => b.id));
+
+  const replacedOldIds: string[] = [];
+  const filteredCurrent = current.filter((b) => {
+    const isSameId = incomingIds.has(b.id);
+    const isSameTitle = incomingTitleKeys.has(normalizeBookTitleKey(b.title));
+    if (isSameId || isSameTitle) {
+      if (!isSameId) replacedOldIds.push(b.id);
+      return false;
+    }
+    return true;
+  });
+
+  if (incomingDupIds.length > 0 || replacedOldIds.length > 0) {
+    purgeDuplicateArtifacts([...incomingDupIds, ...replacedOldIds]);
+  }
+
+  const updated = [...dedupedIncoming, ...filteredCurrent];
   saveBooks(updated);
 
   // Sync each lightweight record to backend database (reverse order so newest ends up at top)
-  for (const book of [...newBooks].reverse()) {
+  for (const book of [...dedupedIncoming].reverse()) {
     try {
       const payload = sanitizeBookForCache(book);
       fetch('/api/books', {
@@ -450,6 +542,38 @@ export async function updateOrderStatus(
   return updated;
 }
 
+export async function confirmBankTransferOrder(orderId: string): Promise<Order[]> {
+  const current = getStoredOrders();
+  const updated = current.map((ord) => {
+    if (ord.id === orderId) {
+      return {
+        ...ord,
+        paymentStatus: 'paid' as const,
+        downloadAccessGranted: true,
+      };
+    }
+    return ord;
+  });
+
+  try {
+    localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.error('Failed to confirm bank transfer order locally:', err);
+  }
+
+  try {
+    fetch(`/api/orders/${orderId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paymentStatus: 'paid', downloadAccessGranted: true }),
+    }).catch((e) => console.warn('Background confirm order error:', e));
+  } catch (err) {
+    console.warn('Network sync error:', err);
+  }
+
+  return updated;
+}
+
 export function getPaystackConfig(): PaystackConfig {
   try {
     const raw = localStorage.getItem(PAYSTACK_CONFIG_KEY);
@@ -460,6 +584,21 @@ export function getPaystackConfig(): PaystackConfig {
   } catch {
     return DEFAULT_PAYSTACK_CONFIG;
   }
+}
+
+export async function fetchServerPaystackConfig(): Promise<PaystackConfig> {
+  try {
+    const res = await fetch('/api/paystack-config');
+    if (res.ok) {
+      const serverConfig = await res.json();
+      const merged = { ...DEFAULT_PAYSTACK_CONFIG, ...serverConfig };
+      localStorage.setItem(PAYSTACK_CONFIG_KEY, JSON.stringify(merged));
+      return merged;
+    }
+  } catch (err) {
+    console.warn('Using local paystack/payout config cache:', err);
+  }
+  return getPaystackConfig();
 }
 
 export function savePaystackConfig(config: PaystackConfig): void {
