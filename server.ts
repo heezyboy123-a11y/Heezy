@@ -366,8 +366,11 @@ async function startServer() {
     });
     app.use(vite.middlewares);
 
-    // Explicit fallback to ensure index.html is always returned for all routes in dev/preview
+    // Explicit fallback to ensure index.html is returned for SPA page navigations in dev/preview
     app.use('*', async (req, res, next) => {
+      if (req.method !== 'GET' || path.extname(req.path)) {
+        return next();
+      }
       const url = req.originalUrl;
       try {
         let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');

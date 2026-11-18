@@ -68,12 +68,14 @@ export const BookDetailModal: React.FC<BookDetailModalProps> = ({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const coverUploadRef = useRef<HTMLInputElement>(null);
 
-  const isFree = book.priceUSD === 0 && selectedFormat === 'ebook';
+  const safeUSD = Number(book.priceUSD) || 0;
+  const safeNGN = Number(book.priceNGN) || Math.round(safeUSD * 1500);
+  const isFree = safeUSD === 0 && selectedFormat === 'ebook';
 
   const formatPrice = (format: 'ebook' | 'print') => {
-    if (book.priceUSD === 0 && format === 'ebook') return 'Free';
-    const basePrice = format === 'print' ? book.priceUSD + 4.5 : book.priceUSD;
-    const baseNGN = format === 'print' ? book.priceNGN + 6500 : book.priceNGN;
+    if (safeUSD === 0 && format === 'ebook') return 'Free';
+    const basePrice = format === 'print' ? safeUSD + 4.5 : safeUSD;
+    const baseNGN = format === 'print' ? safeNGN + 6500 : safeNGN;
 
     if (currency === 'NGN') return `₦${baseNGN.toLocaleString()}`;
     if (currency === 'GBP') return `£${(basePrice * 0.79).toFixed(2)}`;

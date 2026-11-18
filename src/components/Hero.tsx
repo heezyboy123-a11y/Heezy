@@ -56,9 +56,9 @@ export const Hero: React.FC<HeroProps> = ({
         .filter((b) => {
           const q = searchQuery.toLowerCase();
           return (
-            b.title.toLowerCase().includes(q) ||
-            b.author.toLowerCase().includes(q) ||
-            b.genre.toLowerCase().includes(q) ||
+            String(b.title || '').toLowerCase().includes(q) ||
+            String(b.author || '').toLowerCase().includes(q) ||
+            String(b.genre || '').toLowerCase().includes(q) ||
             b.year?.toString().includes(q)
           );
         })
@@ -159,7 +159,7 @@ export const Hero: React.FC<HeroProps> = ({
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="font-mono font-bold text-stone-800 text-[11px]">
-                            {book.priceUSD === 0 ? 'Free' : `$${book.priceUSD.toFixed(2)}`}
+                            {Number(book.priceUSD) === 0 ? 'Free' : `$${(Number(book.priceUSD) || 0).toFixed(2)}`}
                           </span>
                           <ArrowUpRight className="w-3.5 h-3.5 text-stone-400" />
                         </div>
@@ -282,13 +282,13 @@ export const Hero: React.FC<HeroProps> = ({
 
                       <div className="flex items-center gap-2 pt-1">
                         <span className="font-mono text-sm font-bold text-stone-900 tabular-nums">
-                          {activeSpotlightBook.priceUSD === 0
+                          {Number(activeSpotlightBook.priceUSD) === 0
                             ? 'Free Edition'
-                            : `$${activeSpotlightBook.priceUSD.toFixed(2)}`}
+                            : `$${(Number(activeSpotlightBook.priceUSD) || 0).toFixed(2)}`}
                         </span>
-                        {activeSpotlightBook.priceUSD > 0 && (
+                        {Number(activeSpotlightBook.priceUSD) > 0 && (
                           <span className="text-[11px] text-stone-500 font-mono">
-                            (₦{activeSpotlightBook.priceNGN.toLocaleString()})
+                            (₦{(Number(activeSpotlightBook.priceNGN) || 0).toLocaleString()})
                           </span>
                         )}
                       </div>
@@ -325,7 +325,7 @@ export const Hero: React.FC<HeroProps> = ({
                             }`}
                             title={candidate.title}
                           >
-                            {idx + 1}. {candidate.title.split(' ')[0]}
+                            {idx + 1}. {String(candidate.title || 'Book').split(' ')[0]}
                           </button>
                         ))}
                       </div>

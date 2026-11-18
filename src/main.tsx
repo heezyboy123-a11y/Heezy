@@ -31,13 +31,31 @@ class AppErrorBoundary extends React.Component<
           <div className="max-w-md bg-white border border-stone-200 rounded-xl p-6 shadow-sm space-y-3">
             <h1 className="font-serif text-2xl font-bold">Open Shelf</h1>
             <p className="text-xs text-stone-600">{this.state.message}</p>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-stone-900 text-white text-xs font-semibold rounded-md"
-            >
-              Reload Storefront
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 bg-stone-900 text-white text-xs font-semibold rounded-md"
+              >
+                Reload Storefront
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    localStorage.removeItem('openshelf_books_v1');
+                    localStorage.removeItem('openshelf_orders_v1');
+                    localStorage.removeItem('openshelf_cities_v1');
+                  } catch {
+                    // ignore
+                  }
+                  window.location.reload();
+                }}
+                className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 text-xs font-semibold rounded-md"
+              >
+                Reset Cache &amp; Reload
+              </button>
+            </div>
           </div>
         </div>
       );

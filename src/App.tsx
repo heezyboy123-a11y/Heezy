@@ -96,19 +96,43 @@ export default function App() {
 
   // Load persistent data on mount, purge non-real books, and upgrade covers to original Page 1 / official covers
   useEffect(() => {
+    let active = true;
     const initialLocal = getStoredBooks();
-    setBooks(initialLocal);
+    setBooks(Array.isArray(initialLocal) ? initialLocal : []);
     setOrders(getStoredOrders());
     setDeliveryCities(getStoredCities());
 
-    fetchServerBooks().then(async (serverBooks) => {
-      setBooks(serverBooks);
-      const upgraded = await upgradeStoredBooksCovers(serverBooks);
-      setBooks(upgraded);
-    });
-    fetchServerOrders().then((o) => setOrders(o));
-    fetchServerCities().then((c) => setDeliveryCities(c));
+    fetchServerBooks()
+      .then(async (serverBooks) => {
+        if (!active || !Array.isArray(serverBooks)) return;
+        setBooks(serverBooks);
+        try {
+          const upgraded = await upgradeStoredBooksCovers(serverBooks);
+          if (active && Array.isArray(upgraded)) {
+            setBooks(upgraded);
+          }
+        } catch {
+          // Keep fetched books if cover upgrade fails
+        }
+      })
+      .catch(() => {});
+
+    fetchServerOrders()
+      .then((o) => {
+        if (active && Array.isArray(o)) setOrders(o);
+      })
+      .catch(() => {});
+
+    fetchServerCities()
+      .then((c) => {
+        if (active && Array.isArray(c) && c.length > 0) setDeliveryCities(c);
+      })
+      .catch(() => {});
+
     fetchServerPaystackConfig().catch(() => {});
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Handle new book uploaded by author/seller from phone
@@ -194,18 +218,19 @@ export default function App() {
   const filteredBooks = useMemo(() => {
     return books
       .filter((book) => {
+        if (!book) return false;
         // Search query
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
-          const matchTitle = book.title.toLowerCase().includes(q);
-          const matchAuthor = book.author.toLowerCase().includes(q);
-          const matchGenre = book.genre.toLowerCase().includes(q);
+          const matchTitle = String(book.title || '').toLowerCase().includes(q);
+          const matchAuthor = String(book.author || '').toLowerCase().includes(q);
+          const matchGenre = String(book.genre || '').toLowerCase().includes(q);
           const matchYear = book.year?.toString().includes(q);
           if (!matchTitle && !matchAuthor && !matchGenre && !matchYear) return false;
         }
 
         // Active filter (all, free, ebook, print)
-        if (activeFilter === 'free' && book.priceUSD !== 0) return false;
+        if (activeFilter === 'free' && Number(book.priceUSD) !== 0) return false;
         if (activeFilter === 'ebook' && book.formatAvailable === 'print') return false;
         if (activeFilter === 'print' && book.formatAvailable === 'ebook') return false;
 
@@ -215,11 +240,11 @@ export default function App() {
         return true;
       })
       .sort((a, b) => {
-        if (sortBy === 'price-asc') return a.priceUSD - b.priceUSD;
-        if (sortBy === 'price-desc') return b.priceUSD - a.priceUSD;
-        if (sortBy === 'title') return a.title.localeCompare(b.title);
+        if (sortBy === 'price-asc') return (Number(a.priceUSD) || 0) - (Number(b.priceUSD) || 0);
+        if (sortBy === 'price-desc') return (Number(b.priceUSD) || 0) - (Number(a.priceUSD) || 0);
+        if (sortBy === 'title') return String(a.title || '').localeCompare(String(b.title || ''));
         // Default: newest
-        return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
+        return (new Date(b.uploadedAt || 0).getTime() || 0) - (new Date(a.uploadedAt || 0).getTime() || 0);
       });
   }, [books, searchQuery, activeFilter, selectedGenre, sortBy]);
 

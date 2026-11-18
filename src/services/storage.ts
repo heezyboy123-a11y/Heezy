@@ -162,10 +162,44 @@ function purgeDuplicateArtifacts(removedIds: string[]): void {
   }
 }
 
+function sanitizeBookRecord(raw: any): Book | null {
+  if (!raw || typeof raw !== 'object' || !raw.id) return null;
+  if (LEGACY_PLACEHOLDER_IDS.has(raw.id) || raw.isUserUploaded !== true) return null;
+
+  const cleanTitle = stripSiteWatermarks(String(raw.title || '')) || 'Untitled Edition';
+  const cleanAuthor = stripSiteWatermarks(String(raw.author || '')) || 'Independent Author';
+  const parsedUSD = Number(raw.priceUSD);
+  const parsedNGN = Number(raw.priceNGN);
+  const safeUSD = Number.isFinite(parsedUSD) && parsedUSD >= 0 ? parsedUSD : 2;
+  const safeNGN = Number.isFinite(parsedNGN) && parsedNGN >= 0 ? parsedNGN : Math.round(safeUSD * 1500);
+
+  return {
+    ...raw,
+    id: String(raw.id),
+    title: cleanTitle,
+    author: cleanAuthor,
+    genre: (raw.genre || 'Self-Help & Personal Growth') as Book['genre'],
+    description: typeof raw.description === 'string' ? raw.description : '',
+    priceUSD: safeUSD,
+    priceNGN: safeNGN,
+    formatAvailable:
+      raw.formatAvailable === 'print' || raw.formatAvailable === 'both' || raw.formatAvailable === 'ebook'
+        ? raw.formatAvailable
+        : 'ebook',
+    coverUrl: typeof raw.coverUrl === 'string' ? raw.coverUrl : '',
+    uploadedAt: typeof raw.uploadedAt === 'string' && raw.uploadedAt ? raw.uploadedAt : '2026-11-01',
+    sampleContent: typeof raw.sampleContent === 'string' ? raw.sampleContent : '',
+  };
+}
+
 function filterRealBooks(list: Book[]): Book[] {
-  return list.filter(
-    (b) => b && !LEGACY_PLACEHOLDER_IDS.has(b.id) && b.isUserUploaded === true
-  );
+  if (!Array.isArray(list)) return [];
+  const clean: Book[] = [];
+  for (const item of list) {
+    const normalized = sanitizeBookRecord(item);
+    if (normalized) clean.push(normalized);
+  }
+  return clean;
 }
 
 // ----------------------------------------------------
@@ -179,12 +213,12 @@ export function getStoredBooks(): Book[] {
       localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(INITIAL_BOOKS));
       return INITIAL_BOOKS;
     }
-    const parsed: Book[] = JSON.parse(raw);
-    const cleaned = filterRealBooks(parsed).map((b) => ({
-      ...b,
-      title: stripSiteWatermarks(b.title) || b.title,
-      author: stripSiteWatermarks(b.author) || b.author,
-    }));
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      localStorage.setItem(BOOKS_STORAGE_KEY, JSON.stringify(INITIAL_BOOKS));
+      return [];
+    }
+    const cleaned = filterRealBooks(parsed);
     const { unique, removedIds } = deduplicateBooks(cleaned);
     if (unique.length !== parsed.length || removedIds.length > 0) {
       saveBooks(unique);
@@ -258,70 +292,78 @@ export async function fetchServerBooks(): Promise<Book[]> {
  * Upgrades previously uploaded books that still lack their original Page 1 / embedded / official cover.
  */
 export async function upgradeStoredBooksCovers(bookList: Book[]): Promise<Book[]> {
+  if (!Array.isArray(bookList) || bookList.length === 0) return [];
   let changed = false;
+  let processedHeavyCount = 0;
   const upgraded: Book[] = [];
 
   for (const book of bookList) {
-    const alreadyOriginal =
-      book.coverOrigin === 'page1' ||
-      book.coverOrigin === 'embedded' ||
-      book.coverOrigin === 'custom';
+    try {
+      const alreadyOriginal =
+        book.coverOrigin === 'page1' ||
+        book.coverOrigin === 'embedded' ||
+        book.coverOrigin === 'custom';
 
-    const looksLikeGeneratedCanvas =
-      !book.coverUrl ||
-      book.coverUrl.startsWith('data:image/svg') ||
-      book.coverOrigin === 'canvas';
+      const looksLikeGeneratedCanvas =
+        !book.coverUrl ||
+        book.coverUrl.startsWith('data:image/svg') ||
+        book.coverOrigin === 'canvas';
 
-    if (!alreadyOriginal && looksLikeGeneratedCanvas) {
-      // 1. Check IndexedDB for the original PDF/EPUB binary to extract Page 1 cover
-      const storedFile = await getBookFileBlob(book.id);
-      if (storedFile?.blob) {
-        const extracted = await extractOriginalCoverFromBlob(
-          storedFile.blob,
-          book.fileType || 'pdf'
-        );
-        if (extracted.coverUrl) {
-          const updatedBook: Book = {
-            ...book,
-            coverUrl: extracted.coverUrl,
-            coverOrigin: extracted.coverOrigin,
-            pageCount: book.pageCount || extracted.pageCount,
-            sampleContent:
-              extracted.sampleContent &&
-              (!book.sampleContent || book.sampleContent.startsWith('PREVIEW EXCERPT'))
-                ? extracted.sampleContent
-                : book.sampleContent,
-          };
-          changed = true;
-          upgraded.push(updatedBook);
-          fetch(`/api/books/${book.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(sanitizeBookForCache(updatedBook)),
-          }).catch(() => {});
-          continue;
+      if (!alreadyOriginal && looksLikeGeneratedCanvas && processedHeavyCount < 3) {
+        processedHeavyCount++;
+        // 1. Check IndexedDB for the original PDF/EPUB binary to extract Page 1 cover
+        const storedFile = await getBookFileBlob(book.id);
+        if (storedFile?.blob) {
+          const extracted = await extractOriginalCoverFromBlob(
+            storedFile.blob,
+            book.fileType || 'pdf'
+          );
+          if (extracted.coverUrl) {
+            const updatedBook: Book = {
+              ...book,
+              coverUrl: extracted.coverUrl,
+              coverOrigin: extracted.coverOrigin,
+              pageCount: book.pageCount || extracted.pageCount,
+              sampleContent:
+                extracted.sampleContent &&
+                (!book.sampleContent || book.sampleContent.startsWith('PREVIEW EXCERPT'))
+                  ? extracted.sampleContent
+                  : book.sampleContent,
+            };
+            changed = true;
+            upgraded.push(updatedBook);
+            fetch(`/api/books/${book.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(sanitizeBookForCache(updatedBook)),
+            }).catch(() => {});
+            await new Promise((r) => setTimeout(r, 50));
+            continue;
+          }
+        }
+
+        // 2. Fallback: fetch official published book cover if no local binary is present
+        if (book.coverOrigin !== 'official') {
+          const official = await lookupOfficialBookDetails(book.title, book.author);
+          if (official.coverUrl) {
+            const updatedBook: Book = {
+              ...book,
+              coverUrl: official.coverUrl,
+              coverOrigin: 'official',
+            };
+            changed = true;
+            upgraded.push(updatedBook);
+            fetch(`/api/books/${book.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(sanitizeBookForCache(updatedBook)),
+            }).catch(() => {});
+            continue;
+          }
         }
       }
-
-      // 2. Fallback: fetch official published book cover if no local binary is present
-      if (book.coverOrigin !== 'official') {
-        const official = await lookupOfficialBookDetails(book.title, book.author);
-        if (official.coverUrl) {
-          const updatedBook: Book = {
-            ...book,
-            coverUrl: official.coverUrl,
-            coverOrigin: 'official',
-          };
-          changed = true;
-          upgraded.push(updatedBook);
-          fetch(`/api/books/${book.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(sanitizeBookForCache(updatedBook)),
-          }).catch(() => {});
-          continue;
-        }
-      }
+    } catch (err) {
+      console.warn('Skipping cover upgrade for book:', book?.id, err);
     }
 
     upgraded.push(book);
@@ -440,7 +482,8 @@ export function getStoredCities(): DeliveryCity[] {
       localStorage.setItem(CITIES_STORAGE_KEY, JSON.stringify(INITIAL_DELIVERY_CITIES));
       return INITIAL_DELIVERY_CITIES;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_DELIVERY_CITIES;
   } catch {
     return INITIAL_DELIVERY_CITIES;
   }
@@ -474,7 +517,8 @@ export function getStoredOrders(): Order[] {
   try {
     const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -687,12 +731,13 @@ const WISHLIST_STORAGE_KEY = 'openshelf_wishlist_v1';
 export function getStoredWishlist(): string[] {
   try {
     const user = getCurrentUser();
-    if (user && user.wishlistBookIds && user.wishlistBookIds.length > 0) {
+    if (user && Array.isArray(user.wishlistBookIds) && user.wishlistBookIds.length > 0) {
       return user.wishlistBookIds;
     }
     const raw = localStorage.getItem(WISHLIST_STORAGE_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }

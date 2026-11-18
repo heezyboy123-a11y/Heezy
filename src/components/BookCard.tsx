@@ -22,21 +22,23 @@ export const BookCard: React.FC<BookCardProps> = ({
   onToggleWishlist,
 }) => {
   const [imgFailed, setImgFailed] = React.useState(false);
-  const isFree = book.priceUSD === 0;
+  const safeUSD = Number(book.priceUSD) || 0;
+  const safeNGN = Number(book.priceNGN) || Math.round(safeUSD * 1500);
+  const isFree = safeUSD === 0;
 
   // Format price display
   const formatPrice = () => {
     if (isFree) return 'Free';
     if (currency === 'NGN') {
-      return `₦${book.priceNGN.toLocaleString()}`;
+      return `₦${safeNGN.toLocaleString()}`;
     }
     if (currency === 'GBP') {
-      return `£${(book.priceUSD * 0.79).toFixed(2)}`;
+      return `£${(safeUSD * 0.79).toFixed(2)}`;
     }
     if (currency === 'EUR') {
-      return `€${(book.priceUSD * 0.92).toFixed(2)}`;
+      return `€${(safeUSD * 0.92).toFixed(2)}`;
     }
-    return `$${book.priceUSD.toFixed(2)}`;
+    return `$${safeUSD.toFixed(2)}`;
   };
 
   return (

@@ -22,11 +22,13 @@ export const WishlistModal: React.FC<WishlistModalProps> = ({
   onClearWishlist,
 }) => {
   const formatPrice = (book: Book) => {
-    if (book.priceUSD === 0) return 'Free';
-    if (currency === 'NGN') return `₦${book.priceNGN.toLocaleString()}`;
-    if (currency === 'GBP') return `£${(book.priceUSD * 0.79).toFixed(2)}`;
-    if (currency === 'EUR') return `€${(book.priceUSD * 0.92).toFixed(2)}`;
-    return `$${book.priceUSD.toFixed(2)}`;
+    const safeUSD = Number(book.priceUSD) || 0;
+    const safeNGN = Number(book.priceNGN) || Math.round(safeUSD * 1500);
+    if (safeUSD === 0) return 'Free';
+    if (currency === 'NGN') return `₦${safeNGN.toLocaleString()}`;
+    if (currency === 'GBP') return `£${(safeUSD * 0.79).toFixed(2)}`;
+    if (currency === 'EUR') return `€${(safeUSD * 0.92).toFixed(2)}`;
+    return `$${safeUSD.toFixed(2)}`;
   };
 
   return (
